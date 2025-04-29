@@ -616,12 +616,8 @@ async def handle_new_message(event):
         message_history.append(websocket_data)
         await broadcast_message(websocket_data)
         
-        # Tworzymy kopię dla webhooka z usuniętymi dużymi danymi mediów
-        webhook_data = log_data.copy()
-        webhook_data['media'] = log_media
-        
-        # Wysyłamy wiadomość do webhooka (bez dużych danych base64)
-        await send_to_webhook(webhook_data)
+        # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
+        await send_to_webhook(websocket_data)
     except Exception as e:
         logger.error(f"Błąd podczas przetwarzania wiadomości: {str(e)}")
         logger.exception(e)  # Dodajemy pełny stacktrace błędu
@@ -639,19 +635,9 @@ async def save_grouped_message(key):
         websocket_data['received_at'] = websocket_data['received_at'].isoformat()
         message_history.append(websocket_data)
         await broadcast_message(websocket_data)
-        # Webhook bez base64
-        log_media = []
-        for media in grouped.get('media', []):
-            media_copy = media.copy()
-            if 'data' in media_copy:
-                data_size = len(media_copy['data'])
-                media_copy['data'] = f"[BASE64 DATA: {data_size // 1024} KB]"
-            log_media.append(media_copy)
-        webhook_data = grouped.copy()
-        webhook_data['media'] = log_media
-        webhook_data['timestamp'] = webhook_data['timestamp'].isoformat()
-        webhook_data['received_at'] = webhook_data['received_at'].isoformat()
-        await send_to_webhook(webhook_data)
+        
+        # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
+        await send_to_webhook(websocket_data)
 
 
 async def handle_messages(request):
