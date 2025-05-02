@@ -1,28 +1,23 @@
 print("=== STARTUJEMY APLIKACJĘ ===")
-from telethon import TelegramClient, events
-import os
-from dotenv import load_dotenv
 import asyncio
-import logging
-import aiohttp
+import base64
 import json
-from aiohttp import web
+import logging
+import os
 import pathlib
+import sys
 from collections import deque
 from datetime import datetime
-import sys
-from telethon.tl.types import User, Channel, Chat
-import threading
 from queue import Queue
-import psycopg2
-from psycopg2.extras import RealDictCursor
+
+import aiohttp
 import asyncpg
-import datetime as dt
-from datetime import datetime
 import dateutil.parser
-import base64
+from aiohttp import web
+from dotenv import load_dotenv
+from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeImageSize, DocumentAttributeFilename
-import time
+from telethon.tl.types import User, Channel, Chat
 
 # Konfiguracja logowania
 logger = logging.getLogger('telegram_reader')
@@ -73,6 +68,7 @@ message_queue = Queue()
 # Teraz może zawierać różne typy WebSocketów (natywne i aiohttp)
 websocket_clients = set()
 
+
 # Funkcja pomocnicza do wysyłania JSON przez różne typy WebSocket
 async def send_websocket_json(ws, data):
     """Wysyła dane JSON przez WebSocket niezależnie od jego typu"""
@@ -88,11 +84,13 @@ async def send_websocket_json(ws, data):
         logger.error(f"Błąd podczas wysyłania przez WebSocket: {str(e)}")
         return False
 
+
 logger.info("=== START APLIKACJI ===")
 
 grouped_messages_buffer = {}
 grouped_messages_timers = {}
 GROUPED_MESSAGE_TIMEOUT = 1.0  # sekundy
+
 
 async def init_database():
     """Inicjalizuje połączenie z bazą danych i tworzy wymagane tabele"""
@@ -101,7 +99,7 @@ async def init_database():
         logger.info("Inicjalizacja połączenia z bazą danych...")
         # Tworzymy pulę połączeń do bazy danych
         db_pool = await asyncpg.create_pool(dsn=DATABASE_URL)
-        
+
         async with db_pool.acquire() as conn:
             # Tworzymy tabelę wiadomości jeśli nie istnieje
             await conn.execute(f'''
@@ -119,14 +117,14 @@ async def init_database():
                     media JSONB
                 )
             ''')
-            
+
             # Sprawdzenie czy kolumna 'media' istnieje, jeśli nie - dodaj ją
             try:
                 columns = await conn.fetch(
                     f"SELECT column_name FROM information_schema.columns WHERE table_name = '{TELEGRAM_MESSAGES_TABLE}'"
                 )
                 column_names = [col['column_name'] for col in columns]
-                
+
                 if 'media' not in column_names:
                     logger.info("Dodawanie kolumny 'media' do tabeli wiadomości...")
                     await conn.execute(
@@ -134,9 +132,9 @@ async def init_database():
                     )
             except Exception as e:
                 logger.error(f"Błąd podczas sprawdzania/dodawania kolumny 'media': {str(e)}")
-        
+
         logger.info("✓ Inicjalizacja bazy danych zakończona pomyślnie")
-        
+
         return True
     except Exception as e:
         logger.error(f"Błąd podczas inicjalizacji bazy danych: {str(e)}")
@@ -147,16 +145,16 @@ async def get_media_from_message(message):
     """Pobiera media z wiadomości Telegram i konwertuje je do formatu odpowiedniego do zapisu w DB"""
     if not message.media:
         return []
-    
+
     media_list = []
-    
+
     try:
         # Obsługa różnych typów mediów
         if hasattr(message.media, 'photo'):
             # Pobieramy największą wersję zdjęcia
             photo = message.media.photo
             data = await message.download_media(bytes)
-            
+
             if data:
                 media_list.append({
                     'type': 'photo',
@@ -167,29 +165,29 @@ async def get_media_from_message(message):
                 })
             else:
                 logger.warning("Nie udało się pobrać zdjęcia")
-                
+
         elif hasattr(message.media, 'document'):
             doc = message.media.document
-            
+
             # Sprawdzamy czy dokument to zdjęcie
             is_image = False
             for attr in doc.attributes:
                 if isinstance(attr, DocumentAttributeImageSize):
                     is_image = True
                     break
-                
+
             # Jeśli to zdjęcie lub ma rozszerzenie obrazu, pobieramy
             mime_type = doc.mime_type or 'application/octet-stream'
             filename = None
-            
+
             for attr in doc.attributes:
                 if isinstance(attr, DocumentAttributeFilename):
                     filename = attr.file_name
                     break
-            
+
             if is_image or (mime_type and mime_type.startswith('image/')):
                 data = await message.download_media(bytes)
-                
+
                 if data:
                     media_list.append({
                         'type': 'document',
@@ -200,11 +198,11 @@ async def get_media_from_message(message):
                     })
                 else:
                     logger.warning("Nie udało się pobrać dokumentu")
-    
+
     except Exception as e:
         logger.error(f"Błąd podczas pobierania mediów: {str(e)}")
         logger.exception(e)
-    
+
     return media_list
 
 
@@ -214,13 +212,13 @@ async def save_message_to_db(message_data):
         # Konwersja dat z ISO string do obiektów datetime jeśli są w formie string
         timestamp = message_data['timestamp']
         received_at = message_data['received_at']
-        
+
         if isinstance(timestamp, str):
             timestamp = dateutil.parser.parse(timestamp)
-        
+
         if isinstance(received_at, str):
             received_at = dateutil.parser.parse(received_at)
-        
+
         # Serializacja mediów do JSON jeśli istnieją
         media_json = None
         if 'media' in message_data and message_data['media']:
@@ -235,7 +233,7 @@ async def save_message_to_db(message_data):
             except Exception as e:
                 logger.error(f"Błąd podczas serializacji mediów do JSON: {str(e)}")
                 logger.exception(e)
-            
+
         async with db_pool.acquire() as conn:
             # Sprawdzamy czy kolumna 'media' istnieje
             try:
@@ -243,7 +241,7 @@ async def save_message_to_db(message_data):
                     f"SELECT column_name FROM information_schema.columns WHERE table_name = '{TELEGRAM_MESSAGES_TABLE}'"
                 )
                 column_names = [col['column_name'] for col in columns]
-                
+
                 if 'media' not in column_names:
                     logger.info("Dodawanie kolumny 'media' do tabeli wiadomości...")
                     await conn.execute(
@@ -251,7 +249,7 @@ async def save_message_to_db(message_data):
                     )
             except Exception as e:
                 logger.error(f"Błąd podczas sprawdzania kolumny 'media': {str(e)}")
-            
+
             if media_json:
                 await conn.execute(
                     f'''
@@ -312,7 +310,7 @@ async def load_messages_from_db():
             rows = await conn.fetch(
                 f"SELECT * FROM {TELEGRAM_MESSAGES_TABLE} ORDER BY timestamp DESC LIMIT 100"
             )
-            
+
             # Konwertujemy wiersze do słowników
             messages = []
             for row in rows:
@@ -320,7 +318,7 @@ async def load_messages_from_db():
                 # Formatujemy timestampy do ISO
                 message['timestamp'] = message['timestamp'].isoformat()
                 message['received_at'] = message['received_at'].isoformat()
-                
+
                 # Przetwarzamy media z JSONB do obiektu Python
                 if 'media' in message and message['media']:
                     try:
@@ -336,14 +334,14 @@ async def load_messages_from_db():
                         message['media'] = []
                 else:
                     message['media'] = []
-                
+
                 messages.append(message)
-            
+
             # Czyszczenie bufora i dodawanie wiadomości
             message_history.clear()
             for msg in messages:  # Już są posortowane od DESC w zapytaniu SQL
                 message_history.append(msg)
-            
+
             return messages
     except Exception as e:
         logger.error(f"Błąd podczas ładowania wiadomości z bazy danych: {str(e)}")
@@ -370,7 +368,7 @@ async def load_historical_messages():
         if not client.is_connected() or not await client.is_user_authorized():
             logger.warning("Klient nie jest połączony lub wymaga autoryzacji")
             return False
-            
+
         latest_timestamp = await get_latest_message_timestamp()
         added_messages = 0
         async for dialog in client.iter_dialogs():
@@ -458,7 +456,7 @@ async def send_to_webhook(data):
     if not N8N_WEBHOOK_URL:
         logger.warning("Brak skonfigurowanego URL dla webhooka (N8N_WEBHOOK_URL)")
         return
-    
+
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(N8N_WEBHOOK_URL, json=data) as response:
@@ -494,14 +492,14 @@ async def broadcast_message(message):
                 message['media'] = []
         else:
             message['media'] = []
-            
+
         message_json = {
             'type': 'new_message',
             'message': message
         }
-        
+
         clients_to_remove = set()
-        
+
         for ws in list(websocket_clients):
             try:
                 success = await send_websocket_json(ws, message_json)
@@ -510,7 +508,7 @@ async def broadcast_message(message):
             except Exception as e:
                 logger.error(f"Błąd podczas wysyłania wiadomości do klienta WebSocket: {str(e)}")
                 clients_to_remove.add(ws)
-        
+
         # Usuwamy zepsute połączenia
         for ws in clients_to_remove:
             websocket_clients.discard(ws)
@@ -522,7 +520,7 @@ async def handle_new_message(event):
     try:
         chat = await event.get_chat()
         sender = await event.get_sender()
-        
+
         # Określamy typ czatu
         chat_type = 'unknown'
         if isinstance(chat, User):
@@ -534,16 +532,16 @@ async def handle_new_message(event):
                 chat_type = 'channel'
             else:
                 chat_type = 'supergroup'
-        
+
         sender_name = getattr(sender, 'first_name', '')
         if getattr(sender, 'last_name', None):
             sender_name += ' ' + sender.last_name
-        
+
         message_timezone = event.date.tzinfo
-        
+
         # Pobieramy media z wiadomości
         media_list = await get_media_from_message(event)
-        
+
         # Obsługa albumów (grouped_id)
         grouped_id = getattr(event, 'grouped_id', None)
         if grouped_id:
@@ -576,7 +574,7 @@ async def handle_new_message(event):
             )
             return  # nie zapisuj pojedynczej wiadomości od razu
         # --- koniec obsługi grouped_id ---
-        
+
         message_data = {
             'message': event.raw_text,
             'chat_id': str(chat.id),
@@ -589,15 +587,15 @@ async def handle_new_message(event):
             'is_new': True,
             'media': media_list
         }
-        
+
         # Zapisujemy wiadomość do bazy danych
         await save_message_to_db(message_data)
-        
+
         # Tworzymy kopię do wyświetlania w logach
         log_data = message_data.copy()
         log_data['timestamp'] = log_data['timestamp'].isoformat()
         log_data['received_at'] = log_data['received_at'].isoformat()
-        
+
         # Usuńmy z logów dane base64, które są zbyt duże - tylko dla logów
         log_media = []
         for media in message_data.get('media', []):
@@ -606,16 +604,16 @@ async def handle_new_message(event):
                 data_size = len(media_copy['data'])
                 media_copy['data'] = f"[BASE64 DATA: {data_size // 1024} KB]"
             log_media.append(media_copy)
-        
+
         # Przygotowujemy dane do wysyłki przez WebSocket i do bufora
         websocket_data = message_data.copy()
         websocket_data['timestamp'] = websocket_data['timestamp'].isoformat()
         websocket_data['received_at'] = websocket_data['received_at'].isoformat()
-        
+
         # Dodajemy do bufora i wysyłamy przez WebSocket już z datami w formacie ISO
         message_history.append(websocket_data)
         await broadcast_message(websocket_data)
-        
+
         # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
         await send_to_webhook(websocket_data)
     except Exception as e:
@@ -635,7 +633,7 @@ async def save_grouped_message(key):
         websocket_data['received_at'] = websocket_data['received_at'].isoformat()
         message_history.append(websocket_data)
         await broadcast_message(websocket_data)
-        
+
         # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
         await send_to_webhook(websocket_data)
 
@@ -654,7 +652,7 @@ async def get_messages(request):
             rows = await conn.fetch(
                 f"SELECT * FROM {TELEGRAM_MESSAGES_TABLE} ORDER BY timestamp DESC LIMIT 100"
             )
-        
+
         # Konwertujemy wiersze do słowników
         messages = []
         for row in rows:
@@ -662,7 +660,7 @@ async def get_messages(request):
             # Formatujemy timestampy do ISO
             message['timestamp'] = message['timestamp'].isoformat()
             message['received_at'] = message['received_at'].isoformat()
-            
+
             # Przetwarzamy media z JSONB do obiektu Python
             if 'media' in message and message['media']:
                 try:
@@ -677,9 +675,9 @@ async def get_messages(request):
                     message['media'] = []
             else:
                 message['media'] = []
-                
+
             messages.append(message)
-        
+
         return web.json_response({'messages': messages})
     except Exception as e:
         logger.error(f"Błąd podczas pobierania wiadomości: {str(e)}")
@@ -739,11 +737,11 @@ async def init_client():
     global client
     session_dir = os.getenv('TELEGRAM_SESSION_DIR', '/data')
     session_file = os.path.join(session_dir, 'telegram_reader_session.session')
-    
+
     if not os.path.exists(session_dir):
         logger.warning(f"Katalog sesji nie istnieje, tworzę: {session_dir}")
         os.makedirs(session_dir)
-    
+
     # Jeśli plik sesji istnieje ale jest nieważny, usuwamy go
     if os.path.exists(session_file):
         try:
@@ -759,15 +757,15 @@ async def init_client():
             logger.warning("Usuwam uszkodzony plik sesji")
             os.remove(session_file)
             client = None
-    
+
     # Tworzymy nowego klienta jeśli nie istnieje
     if not client:
         client = TelegramClient(session_file, API_ID, API_HASH)
-    
+
     try:
         if not client.is_connected():
             await client.connect()
-        
+
         if await client.is_user_authorized():
             logger.info("✓ Sesja jest aktywna i zautoryzowana")
             me = await client.get_me()
@@ -779,21 +777,21 @@ async def init_client():
     except Exception as e:
         logger.error(f"Błąd podczas sprawdzania stanu sesji: {str(e)}")
         logger.warning("✗ Sesja wymaga autoryzacji")
-    
+
     return client
 
 
 async def reload_messages(request):
     """Endpunkt do ręcznego ponownego załadowania wiadomości"""
     global client
-    
+
     if not client or not client.is_connected():
         return web.json_response({'success': False, 'error': 'Klient nie jest połączony'})
-        
+
     try:
         # Pobieranie i zapisywanie historycznych wiadomości
         success = await load_historical_messages()
-        
+
         if success:
             return web.json_response({'success': True, 'message': 'Wiadomości zostały ponownie załadowane'})
         else:
@@ -807,17 +805,17 @@ async def reload_messages(request):
 async def main():
     """Główna funkcja programu"""
     global client
-    
+
     logger.info("=== Uruchamianie aplikacji ===")
-    
+
     # Inicjalizacja klienta Telegram
     client = await init_client()
-    
+
     # Inicjalizacja bazy danych
     success = await init_database()
     if not success:
         logger.error("Nie udało się połączyć z bazą danych - aplikacja używa tylko pamięci")
-    
+
     # Konfiguracja serwera HTTP
     app = web.Application()
     app.router.add_get('/', index)
@@ -826,18 +824,18 @@ async def main():
     app.router.add_post('/verify_code', verify_code)
     app.router.add_get('/check_session', check_session)
     app.router.add_get('/reload', reload_messages)
-    
+
     # Obsługa WebSocketa
     async def websocket_route_handler(request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
-        
+
         websocket_clients.add(ws)
-        
+
         try:
             # Pobierz wszystkie wiadomości z bazy danych
             messages = await load_messages_from_db()
-            
+
             # Dodatkowe sprawdzenie formatu danych przed wysłaniem
             for msg in messages:
                 # Sprawdzamy czy media jest tablicą
@@ -854,14 +852,14 @@ async def main():
                         msg['media'] = []
                 elif 'media' not in msg:
                     msg['media'] = []
-            
+
             # Wysyłamy historię wiadomości do klienta WebSocket
             history_data = {
                 'type': 'history',
                 'messages': messages
             }
             await send_websocket_json(ws, history_data)
-            
+
             # Nasłuchujemy na wiadomości od klienta
             async for msg in ws:
                 if msg.type == web.WSMsgType.ERROR:
@@ -871,19 +869,19 @@ async def main():
             logger.exception(e)
         finally:
             websocket_clients.discard(ws)
-            
+
         return ws
-    
+
     # Dodanie handlera WebSocket - tylko raz
     app.router.add_get('/ws', websocket_route_handler)
-    
+
     # Uruchomienie serwera HTTP
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
     logger.info("Serwer HTTP uruchomiony na http://0.0.0.0:8080")
-    
+
     # Uruchomienie klienta
     try:
         if client and await client.is_user_authorized():
