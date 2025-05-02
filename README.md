@@ -62,3 +62,13 @@ telethon-listener/
 └── templates/
     └── index.html
 ```
+
+## Pomijanie wiadomości od wybranych nadawców
+
+Aby pominąć wiadomości od określonych użytkowników (np. botów lub konkretnych osób), ustaw zmienną środowiskową `IGNORED_SENDERS` w pliku `.env` lub w konfiguracji środowiska:
+
+```
+IGNORED_SENDERS=PinkPunkTradingBot,Tom_Trader81
+```
+
+Możesz podać dowolną liczbę nazw użytkowników lub imion/nazwisk, rozdzielając je przecinkami. Wiadomości od tych nadawców nie będą przetwarzane ani wyświetlane na froncie.

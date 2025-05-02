@@ -39,6 +39,8 @@ API_HASH = os.getenv('TELEGRAM_API_HASH')
 PHONE = os.getenv('TELEGRAM_PHONE')
 USERNAME = os.getenv('USERNAME')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
+IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
+IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
 
 # Dane do połączenia z bazą PostgreSQL
 PG_USER = os.getenv('POSTGRES_USER')
@@ -516,11 +518,11 @@ async def broadcast_message(message):
 
 # Handler dla nowych wiadomości
 async def handle_new_message(event):
-    logger.info("=== handle_new_message ===")
+    logger.info("=== handle_new_message START ===")
     try:
         chat = await event.get_chat()
         sender = await event.get_sender()
-
+        
         # Określamy typ czatu
         chat_type = 'unknown'
         if isinstance(chat, User):
@@ -532,11 +534,17 @@ async def handle_new_message(event):
                 chat_type = 'channel'
             else:
                 chat_type = 'supergroup'
-
+        
         sender_name = getattr(sender, 'first_name', '')
         if getattr(sender, 'last_name', None):
             sender_name += ' ' + sender.last_name
-
+        username = getattr(sender, 'username', None)
+        
+        # Pomijanie wiadomości od wybranych nadawców
+        if (username and username in IGNORED_SENDERS_LIST) or (sender_name and sender_name in IGNORED_SENDERS_LIST):
+            logger.info(f"Pomijam wiadomość od nadawcy: {username or sender_name}")
+            return
+        
         message_timezone = event.date.tzinfo
 
         # Pobieramy media z wiadomości
