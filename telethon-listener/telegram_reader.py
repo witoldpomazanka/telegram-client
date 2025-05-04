@@ -526,7 +526,8 @@ async def handle_new_message(event):
         
         logger.info(f"Otrzymano wiadomość od: {getattr(sender, 'username', 'Unknown')} ({getattr(sender, 'id', 'Unknown ID')})")
         logger.info(f"Treść wiadomości: {event.raw_text[:100]}...")  # pierwsze 100 znaków
-        logger.info(f"Chat: {getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny'}")
+        chat_title = getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny'
+        logger.info(f"Chat: {chat_title}")
         
         # Określamy typ czatu
         chat_type = 'unknown'
@@ -547,9 +548,11 @@ async def handle_new_message(event):
             sender_name += ' ' + sender.last_name
         username = getattr(sender, 'username', None)
         
-        # Pomijanie wiadomości od wybranych nadawców
-        if (username and username in IGNORED_SENDERS_LIST) or (sender_name and sender_name in IGNORED_SENDERS_LIST) or (chat and chat in IGNORED_SENDERS_LIST):
-            logger.info(f"Pomijam wiadomość od nadawcy/z czatu: {username or sender_name or chat}")
+        # Pomijanie wiadomości od wybranych nadawców lub z określonych chatów
+        if (username and username in IGNORED_SENDERS_LIST) or \
+           (sender_name and sender_name in IGNORED_SENDERS_LIST) or \
+           (chat_title in IGNORED_SENDERS_LIST):
+            logger.info(f"Pomijam wiadomość od nadawcy/z czatu: {username or sender_name or chat_title}")
             return
         
         message_timezone = event.date.tzinfo
