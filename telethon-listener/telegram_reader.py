@@ -519,9 +519,14 @@ async def broadcast_message(message):
 # Handler dla nowych wiadomości
 async def handle_new_message(event):
     logger.info("=== handle_new_message START ===")
+    logger.info(f"Lista ignorowanych nadawców: {IGNORED_SENDERS_LIST}")
     try:
         chat = await event.get_chat()
         sender = await event.get_sender()
+        
+        logger.info(f"Otrzymano wiadomość od: {getattr(sender, 'username', 'Unknown')} ({getattr(sender, 'id', 'Unknown ID')})")
+        logger.info(f"Treść wiadomości: {event.raw_text[:100]}...")  # pierwsze 100 znaków
+        logger.info(f"Chat: {getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny'}")
         
         # Określamy typ czatu
         chat_type = 'unknown'
@@ -535,6 +540,8 @@ async def handle_new_message(event):
             else:
                 chat_type = 'supergroup'
         
+        logger.info(f"Typ chatu: {chat_type}")
+        
         sender_name = getattr(sender, 'first_name', '')
         if getattr(sender, 'last_name', None):
             sender_name += ' ' + sender.last_name
@@ -546,15 +553,19 @@ async def handle_new_message(event):
             return
         
         message_timezone = event.date.tzinfo
-
+        
         # Pobieramy media z wiadomości
+        logger.info("Rozpoczynam pobieranie mediów...")
         media_list = await get_media_from_message(event)
-
+        logger.info(f"Pobrano {len(media_list)} elementów mediów")
+        
         # Obsługa albumów (grouped_id)
         grouped_id = getattr(event, 'grouped_id', None)
         if grouped_id:
+            logger.info(f"Wykryto album (grouped_id: {grouped_id})")
             key = (str(event.chat_id), str(grouped_id))
             if key not in grouped_messages_buffer:
+                logger.info("Tworzę nowy bufor dla albumu")
                 grouped_messages_buffer[key] = {
                     'message': event.raw_text or '',
                     'chat_id': str(chat.id),
@@ -568,6 +579,7 @@ async def handle_new_message(event):
                     'media': []
                 }
             # Dodaj media do bufora
+            logger.info(f"Dodaję {len(media_list)} mediów do bufora albumu")
             grouped_messages_buffer[key]['media'].extend(media_list)
             # Aktualizuj timestamp na najnowszy
             grouped_messages_buffer[key]['timestamp'] = event.date
@@ -580,9 +592,10 @@ async def handle_new_message(event):
                 GROUPED_MESSAGE_TIMEOUT,
                 lambda: asyncio.ensure_future(save_grouped_message(key))
             )
+            logger.info("Ustawiono timer dla albumu")
             return  # nie zapisuj pojedynczej wiadomości od razu
-        # --- koniec obsługi grouped_id ---
-
+        
+        logger.info("Przygotowuję dane wiadomości do zapisu")
         message_data = {
             'message': event.raw_text,
             'chat_id': str(chat.id),
@@ -590,43 +603,39 @@ async def handle_new_message(event):
             'chat_type': chat_type,
             'sender_id': str(sender.id if sender else 0),
             'sender_name': sender_name or 'Nieznany',
-            'timestamp': event.date,  # Używamy obiektu datetime zamiast stringa
-            'received_at': datetime.now(message_timezone),  # Używamy obiektu datetime zamiast stringa
+            'timestamp': event.date,
+            'received_at': datetime.now(message_timezone),
             'is_new': True,
             'media': media_list
         }
-
+        
         # Zapisujemy wiadomość do bazy danych
+        logger.info("Zapisuję wiadomość do bazy danych")
         await save_message_to_db(message_data)
-
-        # Tworzymy kopię do wyświetlania w logach
-        log_data = message_data.copy()
-        log_data['timestamp'] = log_data['timestamp'].isoformat()
-        log_data['received_at'] = log_data['received_at'].isoformat()
-
-        # Usuńmy z logów dane base64, które są zbyt duże - tylko dla logów
-        log_media = []
-        for media in message_data.get('media', []):
-            media_copy = media.copy()
-            if 'data' in media_copy:
-                data_size = len(media_copy['data'])
-                media_copy['data'] = f"[BASE64 DATA: {data_size // 1024} KB]"
-            log_media.append(media_copy)
-
+        logger.info("Wiadomość zapisana w bazie danych")
+        
         # Przygotowujemy dane do wysyłki przez WebSocket i do bufora
         websocket_data = message_data.copy()
         websocket_data['timestamp'] = websocket_data['timestamp'].isoformat()
         websocket_data['received_at'] = websocket_data['received_at'].isoformat()
-
-        # Dodajemy do bufora i wysyłamy przez WebSocket już z datami w formacie ISO
+        
+        logger.info("Dodaję wiadomość do historii")
         message_history.append(websocket_data)
+        
+        logger.info("Wysyłam wiadomość przez WebSocket")
         await broadcast_message(websocket_data)
-
+        logger.info("Wiadomość wysłana przez WebSocket")
+        
         # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
+        logger.info("Wysyłam wiadomość na webhook")
         await send_to_webhook(websocket_data)
+        logger.info("Wiadomość wysłana na webhook")
+        
     except Exception as e:
         logger.error(f"Błąd podczas przetwarzania wiadomości: {str(e)}")
         logger.exception(e)  # Dodajemy pełny stacktrace błędu
+    
+    logger.info("=== handle_new_message END ===")
 
 
 # Funkcja do zapisu zbuforowanego albumu
