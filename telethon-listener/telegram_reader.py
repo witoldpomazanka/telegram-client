@@ -548,8 +548,8 @@ async def handle_new_message(event):
         username = getattr(sender, 'username', None)
         
         # Pomijanie wiadomości od wybranych nadawców
-        if (username and username in IGNORED_SENDERS_LIST) or (sender_name and sender_name in IGNORED_SENDERS_LIST):
-            logger.info(f"Pomijam wiadomość od nadawcy: {username or sender_name}")
+        if (username and username in IGNORED_SENDERS_LIST) or (sender_name and sender_name in IGNORED_SENDERS_LIST) or (chat and chat in IGNORED_SENDERS_LIST):
+            logger.info(f"Pomijam wiadomość od nadawcy/z czatu: {username or sender_name or chat}")
             return
         
         message_timezone = event.date.tzinfo
