@@ -524,10 +524,23 @@ async def handle_new_message(event):
         chat = await event.get_chat()
         sender = await event.get_sender()
         
-        logger.info(f"Otrzymano wiadomość od: {getattr(sender, 'username', 'Unknown')} ({getattr(sender, 'id', 'Unknown ID')})")
+        # Szczegółowe logowanie informacji o nadawcy
+        sender_id = getattr(sender, 'id', 'Unknown ID')
+        username = getattr(sender, 'username', None)
+        first_name = getattr(sender, 'first_name', '')
+        last_name = getattr(sender, 'last_name', '')
+        sender_name = first_name
+        if last_name:
+            sender_name += ' ' + last_name
+            
+        # Szczegółowe logowanie informacji o czacie
+        chat_id = getattr(chat, 'id', 'Unknown ID')
+        chat_username = getattr(chat, 'username', None)
+        chat_title = getattr(chat, 'title', None) or chat_username or 'Prywatny'
+        
+        logger.info(f"Nadawca ID: {sender_id}, Username: {username}, Imię: {first_name}, Nazwisko: {last_name}")
         logger.info(f"Treść wiadomości: {event.raw_text[:100]}...")  # pierwsze 100 znaków
-        chat_title = getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny'
-        logger.info(f"Chat: {chat_title}")
+        logger.info(f"Chat ID: {chat_id}, Nazwa: {chat_title}, Username: {chat_username}")
         
         # Określamy typ czatu
         chat_type = 'unknown'
@@ -543,16 +556,15 @@ async def handle_new_message(event):
         
         logger.info(f"Typ chatu: {chat_type}")
         
-        sender_name = getattr(sender, 'first_name', '')
-        if getattr(sender, 'last_name', None):
-            sender_name += ' ' + sender.last_name
-        username = getattr(sender, 'username', None)
-        
         # Pomijanie wiadomości od wybranych nadawców lub z określonych chatów
-        if (username and username in IGNORED_SENDERS_LIST) or \
-           (sender_name and sender_name in IGNORED_SENDERS_LIST) or \
-           (chat_title in IGNORED_SENDERS_LIST):
-            logger.info(f"Pomijam wiadomość od nadawcy/z czatu: {username or sender_name or chat_title}")
+        if username and username in IGNORED_SENDERS_LIST:
+            logger.info(f"Pomijam wiadomość - username '{username}' jest na liście ignorowanych")
+            return
+        elif sender_name and sender_name in IGNORED_SENDERS_LIST:
+            logger.info(f"Pomijam wiadomość - nazwa nadawcy '{sender_name}' jest na liście ignorowanych")
+            return
+        elif chat_title in IGNORED_SENDERS_LIST:
+            logger.info(f"Pomijam wiadomość - nazwa czatu '{chat_title}' jest na liście ignorowanych")
             return
         
         message_timezone = event.date.tzinfo
