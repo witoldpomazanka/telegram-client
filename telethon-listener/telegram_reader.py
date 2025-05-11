@@ -974,7 +974,8 @@ async def send_message_to_sol_channel(message):
         logger.info("Oczekuję na potwierdzenie transakcji")
         transaction_confirmed = False
         try:
-            async for event in client.iter_messages(chat_id, limit=10, wait_time=65):
+            # Sprawdzamy kilka kolejnych wiadomości
+            async for event in client.iter_messages(chat_id, limit=20, wait_time=65):
                 if event.sender_id == bot_response.sender_id:
                     logger.info(f"Otrzymano wiadomość: {event.text}")
                     # Sprawdzamy czy to właściwe potwierdzenie transakcji
