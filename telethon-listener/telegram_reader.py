@@ -44,6 +44,15 @@ DEGEN_GEMS_CHANNEL_NAMES = os.getenv('DEGEN_GEMS_CHANNEL_NAMES', '')
 DEGEN_GEMS_CHANNEL_LIST = [s.strip() for s in DEGEN_GEMS_CHANNEL_NAMES.split(',') if s.strip()]
 SUPPORTED_CHAINS = os.getenv('SUPPORTED_CHAINS', 'Base,ETH,SOL')
 SUPPORTED_CHAINS_LIST = [chain.strip() for chain in SUPPORTED_CHAINS.split(',')]
+CHAIN_TO_CHANNEL_MAPPING = os.getenv('CHAIN_TO_CHANNEL_MAPPING', 'Base,channel1,ETH,channel2,SOL,channel3')
+CHAIN_CHANNEL_MAP = {}
+
+# Przetwarzanie mapowania łańcuchów na kanały
+chain_channel_pairs = [pair.strip() for pair in CHAIN_TO_CHANNEL_MAPPING.split(',')]
+for i in range(0, len(chain_channel_pairs), 2):
+    if i + 1 < len(chain_channel_pairs):
+        CHAIN_CHANNEL_MAP[chain_channel_pairs[i]] = chain_channel_pairs[i + 1]
+
 IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
 IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
 
@@ -847,6 +856,58 @@ async def reload_messages(request):
         return web.json_response({'success': False, 'error': str(e)})
 
 
+async def send_message_to_base_channel(message):
+    """Wysyła wiadomość do kanału Base"""
+    logger.info("Implementacja wysyłki do kanału Base")
+    # TODO: Implementacja
+
+async def send_message_to_eth_channel(message):
+    """Wysyła wiadomość do kanału ETH"""
+    logger.info("Implementacja wysyłki do kanału ETH")
+    # TODO: Implementacja
+
+async def send_message_to_sol_channel(message):
+    """Wysyła sekwencję wiadomości do kanału SOL"""
+    try:
+        global client
+        if not client or not client.is_connected():
+            logger.error("Klient Telegram nie jest połączony")
+            raise Exception("Klient Telegram nie jest połączony")
+
+        # Pobieramy chat_id z mapowania
+        chat_id = CHAIN_CHANNEL_MAP.get('SOL')
+        if not chat_id:
+            logger.error("Brak skonfigurowanego chat_id dla łańcucha SOL")
+            raise Exception("Brak skonfigurowanego chat_id dla łańcucha SOL")
+
+        logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id})")
+
+        # Pierwsza wiadomość - komenda /buy_sell
+        logger.info("Wysyłam komendę /buy_sell")
+        await client.send_message(chat_id, "/buy_sell")
+        
+        # Czekamy na odpowiedź bota (możemy dodać timeout)
+        await asyncio.sleep(2)  # Dajemy botowi czas na odpowiedź
+
+        # Druga wiadomość - adres
+        address = message.split('\n')[1].split(': ')[1]  # Wyciągamy adres z wiadomości
+        logger.info(f"Wysyłam adres: {address}")
+        await client.send_message(chat_id, address)
+        
+        # Czekamy na odpowiedź bota
+        await asyncio.sleep(2)
+
+        # TODO: Tutaj będziemy dodawać kolejne wiadomości w sekwencji
+        # Na razie czekamy na informację o kolejnych krokach
+
+        logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
+        return True
+
+    except Exception as e:
+        logger.error(f"Błąd podczas wysyłania wiadomości do kanału SOL: {str(e)}")
+        logger.exception(e)
+        raise
+
 async def handle_degen_move(request):
     """Obsługa endpointu /degen-move"""
     try:
@@ -879,7 +940,26 @@ async def handle_degen_move(request):
 
         logger.info(f"Przetwarzanie degen move dla adresu {address} na łańcuchu {chain}")
         
-        # Tutaj możesz dodać własną logikę przetwarzania
+        # Przygotowanie wiadomości
+        message = f"Nowy degen move!\nAdres: {address}\nŁańcuch: {chain}"
+        
+        # Wysyłka wiadomości do odpowiedniego kanału
+        try:
+            if chain == 'Base':
+                await send_message_to_base_channel(message)
+            elif chain == 'ETH':
+                await send_message_to_eth_channel(message)
+            elif chain == 'SOL':
+                await send_message_to_sol_channel(message)
+            
+            logger.info(f"Wiadomość wysłana do kanału dla łańcucha {chain}")
+        except Exception as e:
+            logger.error(f"Błąd podczas wysyłania wiadomości do kanału: {str(e)}")
+            logger.exception(e)
+            return web.json_response(
+                {'error': 'Błąd podczas wysyłania wiadomości do kanału'},
+                status=500
+            )
         
         return web.json_response({
             'status': 'success',
