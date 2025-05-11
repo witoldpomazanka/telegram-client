@@ -42,6 +42,8 @@ N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
 N8N_DEGEN_WEBHOOK_URL = os.getenv('N8N_DEGEN_WEBHOOK_URL')
 DEGEN_GEMS_CHANNEL_NAMES = os.getenv('DEGEN_GEMS_CHANNEL_NAMES', '')
 DEGEN_GEMS_CHANNEL_LIST = [s.strip() for s in DEGEN_GEMS_CHANNEL_NAMES.split(',') if s.strip()]
+SUPPORTED_CHAINS = os.getenv('SUPPORTED_CHAINS', 'Base,ETH,SOL')
+SUPPORTED_CHAINS_LIST = [chain.strip() for chain in SUPPORTED_CHAINS.split(',')]
 IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
 IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
 
@@ -845,6 +847,60 @@ async def reload_messages(request):
         return web.json_response({'success': False, 'error': str(e)})
 
 
+async def handle_degen_move(request):
+    """Obsługa endpointu /degen-move"""
+    try:
+        data = await request.json()
+        logger.info(f"Otrzymano request /degen-move z danymi: {data}")
+
+        # Sprawdzenie czy to invalid content
+        if data.get('content') == 'invalid':
+            logger.info("Otrzymano invalid content - pomijam")
+            return web.json_response({'status': 'ignored'})
+
+        # Sprawdzenie czy mamy wymagane pola
+        if 'address' not in data or 'chain' not in data:
+            logger.error("Brak wymaganych pól w payload")
+            return web.json_response(
+                {'error': 'Brak wymaganych pól: address i chain'},
+                status=400
+            )
+
+        address = data['address']
+        chain = data['chain']
+
+        # Walidacja łańcucha
+        if chain not in SUPPORTED_CHAINS_LIST:
+            logger.error(f"Nieobsługiwany łańcuch: {chain}")
+            return web.json_response(
+                {'error': f'Nieobsługiwany łańcuch. Obsługiwane: {", ".join(SUPPORTED_CHAINS_LIST)}'},
+                status=400
+            )
+
+        logger.info(f"Przetwarzanie degen move dla adresu {address} na łańcuchu {chain}")
+        
+        # Tutaj możesz dodać własną logikę przetwarzania
+        
+        return web.json_response({
+            'status': 'success',
+            'message': f'Przetworzono degen move dla {address} na {chain}'
+        })
+
+    except json.JSONDecodeError:
+        logger.error("Nieprawidłowy format JSON")
+        return web.json_response(
+            {'error': 'Nieprawidłowy format JSON'},
+            status=400
+        )
+    except Exception as e:
+        logger.error(f"Błąd podczas przetwarzania requestu: {str(e)}")
+        logger.exception(e)
+        return web.json_response(
+            {'error': 'Wewnętrzny błąd serwera'},
+            status=500
+        )
+
+
 async def main():
     """Główna funkcja programu"""
     global client
@@ -867,6 +923,7 @@ async def main():
     app.router.add_post('/verify_code', verify_code)
     app.router.add_get('/check_session', check_session)
     app.router.add_get('/reload', reload_messages)
+    app.router.add_post('/degen-move', handle_degen_move)  # Dodajemy nowy endpoint
 
     # Obsługa WebSocketa
     async def websocket_route_handler(request):
