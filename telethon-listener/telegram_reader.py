@@ -974,7 +974,7 @@ async def send_message_to_sol_channel(message):
         logger.info("Oczekuję na potwierdzenie transakcji")
         transaction_confirmed = False
         try:
-            async for event in client.iter_messages(chat_id, limit=10, wait_time=60):
+            async for event in client.iter_messages(chat_id, limit=10, wait_time=65):
                 if event.sender_id == bot_response.sender_id:
                     logger.info(f"Otrzymano wiadomość: {event.text}")
                     if "transaction executed successfully" in event.text.lower():
@@ -982,12 +982,19 @@ async def send_message_to_sol_channel(message):
                         transaction_confirmed = True
                         # Czekamy na przyciski sprzedaży
                         logger.info("Oczekuję na przyciski sprzedaży")
-                        async for next_event in client.iter_messages(chat_id, limit=5, wait_time=30):
+                        async for next_event in client.iter_messages(chat_id, limit=5, wait_time=65):
                             if next_event.sender_id == bot_response.sender_id and next_event.reply_markup:
                                 logger.info("Znaleziono przyciski sprzedaży")
-                                await click_button(client, next_event, "At 100% Rise Sell 50%")
-                                logger.info("Kliknięto przycisk sprzedaży")
-                                return True
+                                # Czekamy na kolejne wiadomości, aż pojawi się przycisk sprzedaży
+                                async for sell_event in client.iter_messages(chat_id, limit=5, wait_time=65):
+                                    if sell_event.sender_id == bot_response.sender_id and sell_event.reply_markup:
+                                        logger.info("Sprawdzam przyciski sprzedaży")
+                                        for row in sell_event.reply_markup.rows:
+                                            for button in row.buttons:
+                                                if button.text == "At 100% Rise Sell 50%":
+                                                    logger.info("Klikam przycisk sprzedaży")
+                                                    await click_button(client, sell_event, "At 100% Rise Sell 50%")
+                                                    return True
                         break
         except Exception as e:
             logger.error(f"Błąd podczas oczekiwania na potwierdzenie transakcji: {str(e)}")
