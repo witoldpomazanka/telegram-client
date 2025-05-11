@@ -44,14 +44,17 @@ DEGEN_GEMS_CHANNEL_NAMES = os.getenv('DEGEN_GEMS_CHANNEL_NAMES', '')
 DEGEN_GEMS_CHANNEL_LIST = [s.strip() for s in DEGEN_GEMS_CHANNEL_NAMES.split(',') if s.strip()]
 SUPPORTED_CHAINS = os.getenv('SUPPORTED_CHAINS', 'Base,ETH,SOL')
 SUPPORTED_CHAINS_LIST = [chain.strip() for chain in SUPPORTED_CHAINS.split(',')]
-CHAIN_TO_CHANNEL_MAPPING = os.getenv('CHAIN_TO_CHANNEL_MAPPING', 'Base,channel1,ETH,channel2,SOL,channel3')
+CHAIN_TO_CHANNEL_MAPPING = os.getenv('CHAIN_TO_CHANNEL_MAPPING', 'Base,channel1,Buy 0.1 BASE,ETH,channel2,Buy 0.1 ETH,SOL,channel3,Buy 0.1 SOL')
 CHAIN_CHANNEL_MAP = {}
 
-# Przetwarzanie mapowania łańcuchów na kanały
+# Przetwarzanie mapowania łańcuchów na kanały i przyciski
 chain_channel_pairs = [pair.strip() for pair in CHAIN_TO_CHANNEL_MAPPING.split(',')]
-for i in range(0, len(chain_channel_pairs), 2):
-    if i + 1 < len(chain_channel_pairs):
-        CHAIN_CHANNEL_MAP[chain_channel_pairs[i]] = chain_channel_pairs[i + 1]
+for i in range(0, len(chain_channel_pairs), 3):
+    if i + 2 < len(chain_channel_pairs):
+        CHAIN_CHANNEL_MAP[chain_channel_pairs[i]] = {
+            'chat_id': chain_channel_pairs[i + 1],
+            'button_text': chain_channel_pairs[i + 2]
+        }
 
 IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
 IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
@@ -912,13 +915,16 @@ async def send_message_to_sol_channel(message):
             logger.error("Klient Telegram nie jest połączony")
             raise Exception("Klient Telegram nie jest połączony")
 
-        # Pobieramy chat_id z mapowania
-        chat_id = CHAIN_CHANNEL_MAP.get('SOL')
-        if not chat_id:
+        # Pobieramy chat_id i tekst przycisku z mapowania
+        chain_config = CHAIN_CHANNEL_MAP.get('SOL')
+        if not chain_config:
             logger.error("Brak skonfigurowanego chat_id dla łańcucha SOL")
             raise Exception("Brak skonfigurowanego chat_id dla łańcucha SOL")
 
-        logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id})")
+        chat_id = chain_config['chat_id']
+        button_text = chain_config['button_text']
+
+        logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id}, przycisk: {button_text})")
 
         # Pierwsza wiadomość - komenda /buy_sell
         logger.info("Wysyłam komendę /buy_sell")
@@ -938,11 +944,9 @@ async def send_message_to_sol_channel(message):
         logger.info("Oczekuję na odpowiedź bota po wysłaniu adresu")
         bot_response = await wait_for_bot_response(client, chat_id)
         
-        # TODO: Tutaj musimy określić, który przycisk kliknąć
-        # Na przykład, jeśli bot daje wybór między "Buy" i "Sell"
-        button_to_click = "Buy"  # To będzie do ustalenia
-        logger.info(f"Próbuję kliknąć przycisk: {button_to_click}")
-        await click_button(client, bot_response, button_to_click)
+        # Klikamy przycisk z konfiguracji
+        logger.info(f"Próbuję kliknąć przycisk: {button_text}")
+        await click_button(client, bot_response, button_text)
 
         # Czekamy na odpowiedź po kliknięciu przycisku
         logger.info("Oczekuję na odpowiedź po kliknięciu przycisku")
