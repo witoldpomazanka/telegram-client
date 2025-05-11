@@ -977,7 +977,8 @@ async def send_message_to_sol_channel(message):
             async for event in client.iter_messages(chat_id, limit=10, wait_time=65):
                 if event.sender_id == bot_response.sender_id:
                     logger.info(f"Otrzymano wiadomość: {event.text}")
-                    if "transaction executed successfully" in event.text.lower():
+                    # Sprawdzamy czy to właściwe potwierdzenie transakcji
+                    if "The transaction executed successfully!" in event.text and "Buy Order Info" in event.text:
                         logger.info("Transakcja potwierdzona!")
                         transaction_confirmed = True
                         # Czekamy na przyciski sprzedaży
