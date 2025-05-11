@@ -970,17 +970,32 @@ async def send_message_to_sol_channel(message):
         logger.info(f"Próbuję kliknąć przycisk: {button_text}")
         await click_button(client, bot_response, button_text)
 
-        # Czekamy na odpowiedź po kliknięciu przycisku - używamy nowej konwersacji
-        logger.info("Oczekuję na odpowiedź po kliknięciu przycisku")
+        # Czekamy na potwierdzenie transakcji
+        logger.info("Oczekuję na potwierdzenie transakcji")
+        transaction_confirmed = False
         try:
-            # Czekamy na nową wiadomość od bota
-            async for event in client.iter_messages(chat_id, limit=1, wait_time=60):
+            async for event in client.iter_messages(chat_id, limit=10, wait_time=60):
                 if event.sender_id == bot_response.sender_id:
-                    logger.info(f"Otrzymano finalną odpowiedź: {event.text}")
-                    return True
+                    logger.info(f"Otrzymano wiadomość: {event.text}")
+                    if "transaction executed successfully" in event.text.lower():
+                        logger.info("Transakcja potwierdzona!")
+                        transaction_confirmed = True
+                        # Czekamy na przyciski sprzedaży
+                        logger.info("Oczekuję na przyciski sprzedaży")
+                        async for next_event in client.iter_messages(chat_id, limit=5, wait_time=30):
+                            if next_event.sender_id == bot_response.sender_id and next_event.reply_markup:
+                                logger.info("Znaleziono przyciski sprzedaży")
+                                await click_button(client, next_event, "At 100% Rise Sell 50%")
+                                logger.info("Kliknięto przycisk sprzedaży")
+                                return True
+                        break
         except Exception as e:
-            logger.error(f"Błąd podczas oczekiwania na finalną odpowiedź: {str(e)}")
+            logger.error(f"Błąd podczas oczekiwania na potwierdzenie transakcji: {str(e)}")
             raise
+
+        if not transaction_confirmed:
+            logger.error("Nie otrzymano potwierdzenia transakcji")
+            raise Exception("Nie otrzymano potwierdzenia transakcji")
 
         logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
         return True
