@@ -39,6 +39,9 @@ API_HASH = os.getenv('TELEGRAM_API_HASH')
 PHONE = os.getenv('TELEGRAM_PHONE')
 USERNAME = os.getenv('USERNAME')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
+N8N_DEGEN_WEBHOOK_URL = os.getenv('N8N_DEGEN_WEBHOOK_URL')
+DEGEN_GEMS_CHANNEL_NAMES = os.getenv('DEGEN_GEMS_CHANNEL_NAMES', '')
+DEGEN_GEMS_CHANNEL_LIST = [s.strip() for s in DEGEN_GEMS_CHANNEL_NAMES.split(',') if s.strip()]
 IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
 IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
 
@@ -454,24 +457,28 @@ async def load_historical_messages():
         return False
 
 
-async def send_to_webhook(data):
-    if not N8N_WEBHOOK_URL:
-        logger.warning("Brak skonfigurowanego URL dla webhooka (N8N_WEBHOOK_URL)")
+async def send_to_webhook(data, webhook_url=None):
+    """Wysyła dane do webhooka"""
+    if not webhook_url:
+        webhook_url = N8N_WEBHOOK_URL
+        
+    if not webhook_url:
+        logger.warning("Brak skonfigurowanego URL dla webhooka")
         return
 
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.post(N8N_WEBHOOK_URL, json=data) as response:
+            async with session.post(webhook_url, json=data) as response:
                 if response.status != 200:
                     logger.error(f"Błąd podczas wysyłania do webhooka, status: {response.status}")
                     response_text = await response.text()
                     logger.error(f"Odpowiedź z webhooka: {response_text}")
         except aiohttp.ClientConnectorError as e:
             logger.error(f"Błąd połączenia z webhookiem: {str(e)}")
-            logger.error(f"Nie można połączyć z {N8N_WEBHOOK_URL}")
+            logger.error(f"Nie można połączyć z {webhook_url}")
         except Exception as e:
             logger.error(f"Błąd podczas wysyłania do webhooka: {str(e)}")
-            logger.exception(e)  # Pełny stacktrace
+            logger.exception(e)
 
 
 async def broadcast_message(message):
@@ -641,10 +648,14 @@ async def handle_new_message(event):
         await broadcast_message(websocket_data)
         logger.info("Wiadomość wysłana przez WebSocket")
         
-        # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
-        logger.info("Wysyłam wiadomość na webhook")
-        await send_to_webhook(websocket_data)
-        logger.info("Wiadomość wysłana na webhook")
+        # Sprawdzamy czy wiadomość pochodzi z kanału z listy DEGEN_GEMS_CHANNEL_LIST
+        if any(channel_name.lower() in chat_title.lower() for channel_name in DEGEN_GEMS_CHANNEL_LIST):
+            logger.info(f"Wiadomość z kanału {chat_title} zawiera nazwę z listy degen - wysyłam na degen webhook")
+            await send_to_webhook(websocket_data, N8N_DEGEN_WEBHOOK_URL)
+        else:
+            # Wysyłamy na standardowy webhook
+            logger.info("Wysyłam wiadomość na standardowy webhook")
+            await send_to_webhook(websocket_data)
         
     except Exception as e:
         logger.error(f"Błąd podczas przetwarzania wiadomości: {str(e)}")
