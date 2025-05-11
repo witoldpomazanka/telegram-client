@@ -866,6 +866,44 @@ async def send_message_to_eth_channel(message):
     logger.info("Implementacja wysyłki do kanału ETH")
     # TODO: Implementacja
 
+async def wait_for_bot_response(client, chat_id, timeout=10):
+    """Czeka na odpowiedź od bota w określonym czacie i zwraca wiadomość z przyciskami"""
+    try:
+        async with client.conversation(chat_id, timeout=timeout) as conv:
+            response = await conv.get_response()
+            logger.info(f"Otrzymano odpowiedź od bota: {response.text}")
+            
+            # Sprawdzamy czy wiadomość ma przyciski
+            if response.reply_markup and hasattr(response.reply_markup, 'rows'):
+                logger.info("Wykryto przyciski w odpowiedzi bota")
+                return response
+            return response
+    except Exception as e:
+        logger.error(f"Błąd podczas oczekiwania na odpowiedź bota: {str(e)}")
+        raise
+
+async def click_button(client, message, button_text):
+    """Klika przycisk o określonej treści w wiadomości"""
+    try:
+        if not message.reply_markup or not hasattr(message.reply_markup, 'rows'):
+            logger.error("Brak przycisków w wiadomości")
+            return None
+
+        # Szukamy przycisku o określonej treści
+        for row in message.reply_markup.rows:
+            for button in row.buttons:
+                if button.text == button_text:
+                    logger.info(f"Znaleziono przycisk: {button_text}")
+                    # Klikanie przycisku
+                    await button.click()
+                    return True
+
+        logger.error(f"Nie znaleziono przycisku o treści: {button_text}")
+        return None
+    except Exception as e:
+        logger.error(f"Błąd podczas klikania przycisku: {str(e)}")
+        raise
+
 async def send_message_to_sol_channel(message):
     """Wysyła sekwencję wiadomości do kanału SOL"""
     try:
@@ -886,19 +924,30 @@ async def send_message_to_sol_channel(message):
         logger.info("Wysyłam komendę /buy_sell")
         await client.send_message(chat_id, "/buy_sell")
         
-        # Czekamy na odpowiedź bota (możemy dodać timeout)
-        await asyncio.sleep(2)  # Dajemy botowi czas na odpowiedź
+        # Czekamy na odpowiedź bota
+        logger.info("Oczekuję na odpowiedź bota po komendzie /buy_sell")
+        bot_response = await wait_for_bot_response(client, chat_id)
+        logger.info(f"Otrzymano odpowiedź od bota: {bot_response.text}")
 
         # Druga wiadomość - adres
         address = message.split('\n')[1].split(': ')[1]  # Wyciągamy adres z wiadomości
         logger.info(f"Wysyłam adres: {address}")
         await client.send_message(chat_id, address)
         
-        # Czekamy na odpowiedź bota
-        await asyncio.sleep(2)
+        # Czekamy na odpowiedź bota z przyciskami
+        logger.info("Oczekuję na odpowiedź bota po wysłaniu adresu")
+        bot_response = await wait_for_bot_response(client, chat_id)
+        
+        # TODO: Tutaj musimy określić, który przycisk kliknąć
+        # Na przykład, jeśli bot daje wybór między "Buy" i "Sell"
+        button_to_click = "Buy"  # To będzie do ustalenia
+        logger.info(f"Próbuję kliknąć przycisk: {button_to_click}")
+        await click_button(client, bot_response, button_to_click)
 
-        # TODO: Tutaj będziemy dodawać kolejne wiadomości w sekwencji
-        # Na razie czekamy na informację o kolejnych krokach
+        # Czekamy na odpowiedź po kliknięciu przycisku
+        logger.info("Oczekuję na odpowiedź po kliknięciu przycisku")
+        final_response = await wait_for_bot_response(client, chat_id)
+        logger.info(f"Otrzymano finalną odpowiedź: {final_response.text}")
 
         logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
         return True
