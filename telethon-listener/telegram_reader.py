@@ -869,10 +869,14 @@ async def send_message_to_eth_channel(message):
     logger.info("Implementacja wysyłki do kanału ETH")
     # TODO: Implementacja
 
-async def wait_for_bot_response(client, chat_id, timeout=10):
-    """Czeka na odpowiedź od bota w określonym czacie i zwraca wiadomość z przyciskami"""
+async def wait_for_bot_response(client, chat_id, message_to_send=None, timeout=10):
+    """Czeka na odpowiedź od bota w określonym czacie"""
     try:
         async with client.conversation(chat_id, timeout=timeout) as conv:
+            if message_to_send:
+                # Wysyłamy wiadomość w kontekście konwersacji
+                await conv.send_message(message_to_send)
+            # Czekamy na odpowiedź
             response = await conv.get_response()
             logger.info(f"Otrzymano odpowiedź od bota: {response.text}")
             
@@ -928,21 +932,13 @@ async def send_message_to_sol_channel(message):
 
         # Pierwsza wiadomość - komenda /buy_sell
         logger.info("Wysyłam komendę /buy_sell")
-        await client.send_message(chat_id, "/buy_sell")
-        
-        # Czekamy na odpowiedź bota
-        logger.info("Oczekuję na odpowiedź bota po komendzie /buy_sell")
-        bot_response = await wait_for_bot_response(client, chat_id)
+        bot_response = await wait_for_bot_response(client, chat_id, "/buy_sell")
         logger.info(f"Otrzymano odpowiedź od bota: {bot_response.text}")
 
         # Druga wiadomość - adres
         address = message.split('\n')[1].split(': ')[1]  # Wyciągamy adres z wiadomości
         logger.info(f"Wysyłam adres: {address}")
-        await client.send_message(chat_id, address)
-        
-        # Czekamy na odpowiedź bota z przyciskami
-        logger.info("Oczekuję na odpowiedź bota po wysłaniu adresu")
-        bot_response = await wait_for_bot_response(client, chat_id)
+        bot_response = await wait_for_bot_response(client, chat_id, address)
         
         # Klikamy przycisk z konfiguracji
         logger.info(f"Próbuję kliknąć przycisk: {button_text}")
