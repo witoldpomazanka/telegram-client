@@ -959,10 +959,17 @@ async def send_message_to_sol_channel(message):
         logger.info(f"Próbuję kliknąć przycisk: {button_text}")
         await click_button(client, bot_response, button_text)
 
-        # Czekamy na odpowiedź po kliknięciu przycisku
+        # Czekamy na odpowiedź po kliknięciu przycisku - używamy nowej konwersacji
         logger.info("Oczekuję na odpowiedź po kliknięciu przycisku")
-        final_response = await wait_for_bot_response(client, chat_id)
-        logger.info(f"Otrzymano finalną odpowiedź: {final_response.text}")
+        try:
+            # Czekamy na nową wiadomość od bota
+            async for event in client.iter_messages(chat_id, limit=1, wait_time=60):
+                if event.sender_id == bot_response.sender_id:
+                    logger.info(f"Otrzymano finalną odpowiedź: {event.text}")
+                    return True
+        except Exception as e:
+            logger.error(f"Błąd podczas oczekiwania na finalną odpowiedź: {str(e)}")
+            raise
 
         logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
         return True
