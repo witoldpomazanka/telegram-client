@@ -29,6 +29,15 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
+# Logger dla operacji degen move
+degen_logger = logging.getLogger('degen_move')
+degen_logger.setLevel(logging.INFO)
+degen_handler = logging.StreamHandler(sys.stdout)
+degen_handler.setLevel(logging.INFO)
+degen_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+degen_handler.setFormatter(degen_formatter)
+degen_logger.addHandler(degen_handler)
+
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('telethon.network.mtprotosender').setLevel(logging.WARNING)
 
@@ -879,39 +888,39 @@ async def wait_for_bot_response(client, chat_id, message_to_send=None, timeout=1
                 await conv.send_message(message_to_send)
             # Czekamy na odpowiedź
             response = await conv.get_response()
-            logger.info(f"Otrzymano odpowiedź od bota: {response.text}")
+            degen_logger.info(f"Otrzymano odpowiedź od bota: {response.text}")
             
             # Sprawdzamy czy wiadomość ma przyciski
             if response.reply_markup and hasattr(response.reply_markup, 'rows'):
-                logger.info("Wykryto przyciski w odpowiedzi bota")
+                degen_logger.info("Wykryto przyciski w odpowiedzi bota")
                 return response
             return response
     except Exception as e:
-        logger.error(f"Błąd podczas oczekiwania na odpowiedź bota: {str(e)}")
+        degen_logger.error(f"Błąd podczas oczekiwania na odpowiedź bota: {str(e)}")
         raise
 
 async def click_button(client, message, button_text):
     """Klika przycisk o określonej treści w wiadomości"""
     try:
         if not message.reply_markup or not hasattr(message.reply_markup, 'rows'):
-            logger.error("Brak przycisków w wiadomości")
+            degen_logger.error("Brak przycisków w wiadomości")
             return None
 
         # Logujemy wszystkie dostępne przyciski
-        logger.info("Dostępne przyciski:")
+        degen_logger.info("Dostępne przyciski:")
         for row_idx, row in enumerate(message.reply_markup.rows):
             for button_idx, button in enumerate(row.buttons):
-                logger.info(f"Rząd {row_idx + 1}, Przycisk {button_idx + 1}:")
-                logger.info(f"  - Tekst: {button.text}")
-                logger.info(f"  - Typ: {type(button).__name__}")
+                degen_logger.info(f"Rząd {row_idx + 1}, Przycisk {button_idx + 1}:")
+                degen_logger.info(f"  - Tekst: {button.text}")
+                degen_logger.info(f"  - Typ: {type(button).__name__}")
                 if hasattr(button, 'data'):
-                    logger.info(f"  - Data: {button.data}")
+                    degen_logger.info(f"  - Data: {button.data}")
 
         # Szukamy przycisku o określonej treści
         for row in message.reply_markup.rows:
             for button in row.buttons:
                 if button.text == button_text:
-                    logger.info(f"Znaleziono przycisk: {button_text}")
+                    degen_logger.info(f"Znaleziono przycisk: {button_text}")
                     # Klikanie przycisku poprzez callback_query
                     await client(GetBotCallbackAnswerRequest(
                         peer=message.peer_id,
@@ -920,10 +929,10 @@ async def click_button(client, message, button_text):
                     ))
                     return True
 
-        logger.error(f"Nie znaleziono przycisku o treści: {button_text}")
+        degen_logger.error(f"Nie znaleziono przycisku o treści: {button_text}")
         return None
     except Exception as e:
-        logger.error(f"Błąd podczas klikania przycisku: {str(e)}")
+        degen_logger.error(f"Błąd podczas klikania przycisku: {str(e)}")
         raise
 
 async def send_message_to_sol_channel(message):
@@ -931,85 +940,85 @@ async def send_message_to_sol_channel(message):
     try:
         global client
         if not client or not client.is_connected():
-            logger.error("Klient Telegram nie jest połączony")
+            degen_logger.error("Klient Telegram nie jest połączony")
             raise Exception("Klient Telegram nie jest połączony")
 
         # Pobieramy chat_id i tekst przycisku z mapowania
         chain_config = CHAIN_CHANNEL_MAP.get('SOL')
         if not chain_config:
-            logger.error("Brak skonfigurowanego chat_id dla łańcucha SOL")
+            degen_logger.error("Brak skonfigurowanego chat_id dla łańcucha SOL")
             raise Exception("Brak skonfigurowanego chat_id dla łańcucha SOL")
 
         chat_name = chain_config['chat_id']
         button_text = chain_config['button_text']
 
         # Szukamy konwersacji po nazwie
-        logger.info(f"Szukam konwersacji o nazwie: {chat_name}")
+        degen_logger.info(f"Szukam konwersacji o nazwie: {chat_name}")
         async for dialog in client.iter_dialogs():
             if dialog.name == chat_name:
                 chat_id = dialog.id
-                logger.info(f"Znaleziono konwersację o ID: {chat_id}")
+                degen_logger.info(f"Znaleziono konwersację o ID: {chat_id}")
                 break
         else:
-            logger.error(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
+            degen_logger.error(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
             raise Exception(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
 
-        logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id}, przycisk: {button_text})")
+        degen_logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id}, przycisk: {button_text})")
 
         # Pierwsza wiadomość - komenda /buy_sell
-        logger.info("Wysyłam komendę /buy_sell")
+        degen_logger.info("Wysyłam komendę /buy_sell")
         bot_response = await wait_for_bot_response(client, chat_id, "/buy_sell")
-        logger.info(f"Otrzymano odpowiedź od bota: {bot_response.text}")
+        degen_logger.info(f"Otrzymano odpowiedź od bota: {bot_response.text}")
 
         # Druga wiadomość - adres
         address = message.split('\n')[1].split(': ')[1]  # Wyciągamy adres z wiadomości
-        logger.info(f"Wysyłam adres: {address}")
+        degen_logger.info(f"Wysyłam adres: {address}")
         bot_response = await wait_for_bot_response(client, chat_id, address)
         
         # Klikamy przycisk z konfiguracji
-        logger.info(f"Próbuję kliknąć przycisk: {button_text}")
+        degen_logger.info(f"Próbuję kliknąć przycisk: {button_text}")
         await click_button(client, bot_response, button_text)
 
         # Czekamy na potwierdzenie transakcji
-        logger.info("Oczekuję na potwierdzenie transakcji")
+        degen_logger.info("Oczekuję na potwierdzenie transakcji")
         transaction_confirmed = False
         try:
             # Sprawdzamy kilka kolejnych wiadomości
             async for event in client.iter_messages(chat_id, limit=20, wait_time=65):
                 if event.sender_id == bot_response.sender_id:
-                    logger.info(f"Otrzymano wiadomość: {event.text}")
+                    degen_logger.info(f"Otrzymano wiadomość: {event.text}")
                     # Sprawdzamy czy to właściwe potwierdzenie transakcji
                     if "The transaction executed successfully!" in event.text:
-                        logger.info("Transakcja potwierdzona!")
+                        degen_logger.info("Transakcja potwierdzona!")
                         transaction_confirmed = True
                         # Czekamy 0.5 sekundy przed kliknięciem przycisku sprzedaży
                         await asyncio.sleep(0.5)
                         # Czekamy na przyciski sprzedaży
-                        logger.info("Oczekuję na przyciski sprzedaży")
+                        degen_logger.info("Oczekuję na przyciski sprzedaży")
                         async for next_event in client.iter_messages(chat_id, limit=5, wait_time=65):
                             if next_event.sender_id == bot_response.sender_id and next_event.reply_markup:
-                                logger.info("Znaleziono przyciski sprzedaży")
+                                degen_logger.info("Znaleziono przyciski sprzedaży")
                                 # Szukamy przycisku "At 100% Rise Sell 50%"
                                 for row in next_event.reply_markup.rows:
                                     for button in row.buttons:
                                         if button.text == "At 100% Rise Sell 50%":
-                                            logger.info("Klikam przycisk sprzedaży")
+                                            degen_logger.info("Klikam przycisk sprzedaży")
                                             await click_button(client, next_event, "At 100% Rise Sell 50%")
                                             return True
                         break
         except Exception as e:
-            logger.error(f"Błąd podczas oczekiwania na potwierdzenie transakcji: {str(e)}")
+            degen_logger.error(f"Błąd podczas oczekiwania na potwierdzenie transakcji: {str(e)}")
             raise
 
         if not transaction_confirmed:
-            logger.error("Nie otrzymano potwierdzenia transakcji")
+            degen_logger.error("Nie otrzymano potwierdzenia transakcji")
             raise Exception("Nie otrzymano potwierdzenia transakcji")
 
-        logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
+        degen_logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
         return True
 
     except Exception as e:
-        logger.error(f"Błąd podczas wysyłania wiadomości do kanału SOL: {str(e)}")
+        degen_logger.error(f"Błąd podczas wysyłania wiadomości do kanału SOL: {str(e)}")
         logger.exception(e)
         raise
 
@@ -1017,16 +1026,16 @@ async def handle_degen_move(request):
     """Obsługa endpointu /degen-move"""
     try:
         data = await request.json()
-        logger.info(f"Otrzymano request /degen-move z danymi: {data}")
+        degen_logger.info(f"Otrzymano request /degen-move z danymi: {data}")
 
         # Sprawdzenie czy to invalid content
         if data.get('content') == 'invalid':
-            logger.info("Otrzymano invalid content - pomijam")
+            degen_logger.info("Otrzymano invalid content - pomijam")
             return web.json_response({'status': 'ignored'})
 
         # Sprawdzenie czy mamy wymagane pola
         if 'address' not in data or 'chain' not in data:
-            logger.error("Brak wymaganych pól w payload")
+            degen_logger.error("Brak wymaganych pól w payload")
             return web.json_response(
                 {'error': 'Brak wymaganych pól: address i chain'},
                 status=400
@@ -1037,13 +1046,13 @@ async def handle_degen_move(request):
 
         # Walidacja łańcucha
         if chain not in SUPPORTED_CHAINS_LIST:
-            logger.error(f"Nieobsługiwany łańcuch: {chain}")
+            degen_logger.error(f"Nieobsługiwany łańcuch: {chain}")
             return web.json_response(
                 {'error': f'Nieobsługiwany łańcuch. Obsługiwane: {", ".join(SUPPORTED_CHAINS_LIST)}'},
                 status=400
             )
 
-        logger.info(f"Przetwarzanie degen move dla adresu {address} na łańcuchu {chain}")
+        degen_logger.info(f"Przetwarzanie degen move dla adresu {address} na łańcuchu {chain}")
         
         # Przygotowanie wiadomości
         message = f"Nowy degen move!\nAdres: {address}\nŁańcuch: {chain}"
@@ -1057,9 +1066,9 @@ async def handle_degen_move(request):
             elif chain == 'SOL':
                 await send_message_to_sol_channel(message)
             
-            logger.info(f"Wiadomość wysłana do kanału dla łańcucha {chain}")
+            degen_logger.info(f"Wiadomość wysłana do kanału dla łańcucha {chain}")
         except Exception as e:
-            logger.error(f"Błąd podczas wysyłania wiadomości do kanału: {str(e)}")
+            degen_logger.error(f"Błąd podczas wysyłania wiadomości do kanału: {str(e)}")
             logger.exception(e)
             return web.json_response(
                 {'error': 'Błąd podczas wysyłania wiadomości do kanału'},
@@ -1072,13 +1081,13 @@ async def handle_degen_move(request):
         })
 
     except json.JSONDecodeError:
-        logger.error("Nieprawidłowy format JSON")
+        degen_logger.error("Nieprawidłowy format JSON")
         return web.json_response(
             {'error': 'Nieprawidłowy format JSON'},
             status=400
         )
     except Exception as e:
-        logger.error(f"Błąd podczas przetwarzania requestu: {str(e)}")
+        degen_logger.error(f"Błąd podczas przetwarzania requestu: {str(e)}")
         logger.exception(e)
         return web.json_response(
             {'error': 'Wewnętrzny błąd serwera'},
