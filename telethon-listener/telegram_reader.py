@@ -991,8 +991,9 @@ async def send_message_to_sol_channel(message):
                     if "The transaction executed successfully!" in event.text:
                         degen_logger.info("Transakcja potwierdzona!")
                         transaction_confirmed = True
-                        # Czekamy 0.5 sekundy przed kliknięciem przycisku sprzedaży
-                        await asyncio.sleep(0.5)
+                        # Czekamy 10 sekund przed kliknięciem przycisku sprzedaży
+                        degen_logger.info("Czekam 10 sekund przed ustawieniem automatycznej sprzedaży...")
+                        await asyncio.sleep(10)
                         # Czekamy na przyciski sprzedaży
                         degen_logger.info("Oczekuję na przyciski sprzedaży")
                         async for next_event in client.iter_messages(chat_id, limit=5, wait_time=65):
