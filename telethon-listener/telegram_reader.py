@@ -940,8 +940,19 @@ async def send_message_to_sol_channel(message):
             logger.error("Brak skonfigurowanego chat_id dla łańcucha SOL")
             raise Exception("Brak skonfigurowanego chat_id dla łańcucha SOL")
 
-        chat_id = chain_config['chat_id']
+        chat_name = chain_config['chat_id']
         button_text = chain_config['button_text']
+
+        # Szukamy konwersacji po nazwie
+        logger.info(f"Szukam konwersacji o nazwie: {chat_name}")
+        async for dialog in client.iter_dialogs():
+            if dialog.name == chat_name:
+                chat_id = dialog.id
+                logger.info(f"Znaleziono konwersację o ID: {chat_id}")
+                break
+        else:
+            logger.error(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
+            raise Exception(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
 
         logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id}, przycisk: {button_text})")
 
