@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeImageSize, DocumentAttributeFilename
 from telethon.tl.types import User, Channel, Chat
+from telethon.tl.functions.messages import GetBotCallbackAnswerRequest
 
 # Konfiguracja logowania
 logger = logging.getLogger('telegram_reader')
@@ -896,13 +897,27 @@ async def click_button(client, message, button_text):
             logger.error("Brak przycisków w wiadomości")
             return None
 
+        # Logujemy wszystkie dostępne przyciski
+        logger.info("Dostępne przyciski:")
+        for row_idx, row in enumerate(message.reply_markup.rows):
+            for button_idx, button in enumerate(row.buttons):
+                logger.info(f"Rząd {row_idx + 1}, Przycisk {button_idx + 1}:")
+                logger.info(f"  - Tekst: {button.text}")
+                logger.info(f"  - Typ: {type(button).__name__}")
+                if hasattr(button, 'data'):
+                    logger.info(f"  - Data: {button.data}")
+
         # Szukamy przycisku o określonej treści
         for row in message.reply_markup.rows:
             for button in row.buttons:
                 if button.text == button_text:
                     logger.info(f"Znaleziono przycisk: {button_text}")
-                    # Klikanie przycisku
-                    await button.click()
+                    # Klikanie przycisku poprzez callback_query
+                    await client(GetBotCallbackAnswerRequest(
+                        peer=message.peer_id,
+                        msg_id=message.id,
+                        data=button.data
+                    ))
                     return True
 
         logger.error(f"Nie znaleziono przycisku o treści: {button_text}")
