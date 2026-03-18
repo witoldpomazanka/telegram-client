@@ -19,6 +19,8 @@ from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeImageSize, DocumentAttributeFilename
 from telethon.tl.types import User, Channel, Chat
 from telethon.tl.functions.messages import GetBotCallbackAnswerRequest
+from telethon.tl.types import MessageReplyHeader
+from telethon.tl.functions.channels import GetForumTopicsRequest
 
 # Konfiguracja logowania
 logger = logging.getLogger('telegram_reader')
@@ -97,6 +99,23 @@ message_queue = Queue()
 # Teraz może zawierać różne typy WebSocketów (natywne i aiohttp)
 websocket_clients = set()
 
+TOPIC_CACHE = {} # Dodaj to na górze przy zmiennych globalnych
+
+async def get_topic_name(chat_id, topic_id):
+    """Pobiera nazwę tematu (Topic) dla grup typu Forum"""
+    if not topic_id: return None
+    cache_key = f"{chat_id}_{topic_id}"
+    if cache_key in TOPIC_CACHE: return TOPIC_CACHE[cache_key]
+    try:
+        # GetForumTopicsRequest wyciąga listę nazw tematów z kanału
+        from telethon.tl.functions.channels import GetForumTopicsRequest
+        result = await client(GetForumTopicsRequest(channel=chat_id, offset_date=None, offset_id=0, offset_topic=0, limit=100))
+        for topic in result.topics:
+            TOPIC_CACHE[f"{chat_id}_{topic.id}"] = topic.title
+        return TOPIC_CACHE.get(cache_key, f"Topic {topic_id}")
+    except Exception as e:
+        logger.error(f"Błąd pobierania nazwy tematu: {e}")
+        return f"Topic {topic_id}"
 
 # Funkcja pomocnicza do wysyłania JSON przez różne typy WebSocket
 async def send_websocket_json(ws, data):
@@ -485,7 +504,7 @@ async def send_to_webhook(data, webhook_url=None):
     """Wysyła dane do webhooka"""
     if not webhook_url:
         webhook_url = N8N_WEBHOOK_URL
-        
+
     if not webhook_url:
         logger.warning("Brak skonfigurowanego URL dla webhooka")
         return
@@ -547,145 +566,75 @@ async def broadcast_message(message):
             websocket_clients.discard(ws)
 
 
-# Handler dla nowych wiadomości
 async def handle_new_message(event):
     logger.info("=== handle_new_message START ===")
-    logger.info(f"Lista ignorowanych nadawców: {IGNORED_SENDERS_LIST}")
     try:
         chat = await event.get_chat()
         sender = await event.get_sender()
-        
-        # Szczegółowe logowanie informacji o nadawcy
-        sender_id = getattr(sender, 'id', 'Unknown ID')
-        username = getattr(sender, 'username', None)
-        first_name = getattr(sender, 'first_name', '')
-        last_name = getattr(sender, 'last_name', '')
-        sender_name = first_name
-        if last_name:
-            sender_name += ' ' + last_name
-            
-        # Szczegółowe logowanie informacji o czacie
-        chat_id = getattr(chat, 'id', 'Unknown ID')
-        chat_username = getattr(chat, 'username', None)
-        chat_title = getattr(chat, 'title', None) or chat_username or 'Prywatny'
-        
-        logger.info(f"Nadawca ID: {sender_id}, Username: {username}, Imię: {first_name}, Nazwisko: {last_name}")
-        logger.info(f"Treść wiadomości: {event.raw_text[:100]}...")  # pierwsze 100 znaków
-        logger.info(f"Chat ID: {chat_id}, Nazwa: {chat_title}, Username: {chat_username}")
-        
-        # Określamy typ czatu
-        chat_type = 'unknown'
-        if isinstance(chat, User):
-            chat_type = 'private'
-        elif isinstance(chat, Chat):
-            chat_type = 'group'
-        elif isinstance(chat, Channel):
-            if getattr(chat, 'broadcast', False):
-                chat_type = 'channel'
-            else:
-                chat_type = 'supergroup'
-        
-        logger.info(f"Typ chatu: {chat_type}")
-        
-        # Pomijanie wiadomości od wybranych nadawców lub z określonych chatów
-        if username and username in IGNORED_SENDERS_LIST:
-            logger.info(f"Pomijam wiadomość - username '{username}' jest na liście ignorowanych")
-            return
-        elif sender_name and sender_name in IGNORED_SENDERS_LIST:
-            logger.info(f"Pomijam wiadomość - nazwa nadawcy '{sender_name}' jest na liście ignorowanych")
-            return
-        elif chat_title in IGNORED_SENDERS_LIST:
-            logger.info(f"Pomijam wiadomość - nazwa czatu '{chat_title}' jest na liście ignorowanych")
-            return
-        
+
+        # 1. Identyfikacja czatu i TEMATU (Topic/Forum)
+        main_chat_title = getattr(chat, 'title', None) or getattr(chat, 'username', 'Prywatny')
+        topic_id = None
+        topic_suffix = ""
+
+        # Sprawdzamy czy wiadomość należy do konkretnego wątku (Topic)
+        if event.message.reply_to and hasattr(event.message.reply_to, 'reply_to_top_id'):
+            topic_id = event.message.reply_to.reply_to_top_id
+            if getattr(chat, 'forum', False) and topic_id:
+                name = await get_topic_name(event.chat_id, topic_id)
+                topic_suffix = f" [{name}]"
+
+        full_display_title = f"{main_chat_title}{topic_suffix}"
+
+        # 2. ZAMIANA IGNOROWANYCH NA ALLOWED (Biała lista)
+        # Pobieramy ALLOWED_SENDERS z .env
+        allowed_env = os.getenv('ALLOWED_SENDERS', '')
+        allowed_list = [s.strip() for s in allowed_env.split(',') if s.strip()]
+
+        if allowed_list:
+            # Sprawdzamy czy nazwa czatu, pełna nazwa z tematem lub username są na liście
+            is_allowed = any(x in [main_chat_title, full_display_title, getattr(chat, 'username', '')] for x in allowed_list)
+            if not is_allowed:
+                logger.info(f"Pomijam - {full_display_title} nie jest na liście ALLOWED")
+                return
+
+        # 3. IDENTYFIKACJA WIADOMOŚCI NADRZĘDNEJ (Parent)
+        # parent_id to ID wiadomości, na którą ktoś odpisał (jeśli dotyczy)
+        parent_id = event.message.reply_to.reply_to_msg_id if event.message.reply_to else None
+
         message_timezone = event.date.tzinfo
-        
-        # Pobieramy media z wiadomości
-        logger.info("Rozpoczynam pobieranie mediów...")
         media_list = await get_media_from_message(event)
-        logger.info(f"Pobrano {len(media_list)} elementów mediów")
-        
-        # Obsługa albumów (grouped_id)
-        grouped_id = getattr(event, 'grouped_id', None)
-        if grouped_id:
-            logger.info(f"Wykryto album (grouped_id: {grouped_id})")
-            key = (str(event.chat_id), str(grouped_id))
-            if key not in grouped_messages_buffer:
-                logger.info("Tworzę nowy bufor dla albumu")
-                grouped_messages_buffer[key] = {
-                    'message': event.raw_text or '',
-                    'chat_id': str(chat.id),
-                    'chat_title': getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny',
-                    'chat_type': chat_type,
-                    'sender_id': str(sender.id if sender else 0),
-                    'sender_name': sender_name or 'Nieznany',
-                    'timestamp': event.date,
-                    'received_at': datetime.now(message_timezone),
-                    'is_new': True,
-                    'media': []
-                }
-            # Dodaj media do bufora
-            logger.info(f"Dodaję {len(media_list)} mediów do bufora albumu")
-            grouped_messages_buffer[key]['media'].extend(media_list)
-            # Aktualizuj timestamp na najnowszy
-            grouped_messages_buffer[key]['timestamp'] = event.date
-            grouped_messages_buffer[key]['received_at'] = datetime.now(message_timezone)
-            # Ustaw/odnów timer
-            if key in grouped_messages_timers:
-                grouped_messages_timers[key].cancel()
-            loop = asyncio.get_event_loop()
-            grouped_messages_timers[key] = loop.call_later(
-                GROUPED_MESSAGE_TIMEOUT,
-                lambda: asyncio.ensure_future(save_grouped_message(key))
-            )
-            logger.info("Ustawiono timer dla albumu")
-            return  # nie zapisuj pojedynczej wiadomości od razu
-        
-        logger.info("Przygotowuję dane wiadomości do zapisu")
+
+        # Budujemy dane do n8n
         message_data = {
             'message': event.raw_text,
             'chat_id': str(chat.id),
-            'chat_title': getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny',
-            'chat_type': chat_type,
-            'sender_id': str(sender.id if sender else 0),
-            'sender_name': sender_name or 'Nieznany',
-            'timestamp': event.date,
-            'received_at': datetime.now(message_timezone),
+            'chat_title': full_display_title, # Tu będzie np. "Trading PRO [Sygnały]"
+            'chat_type': 'channel' if isinstance(chat, Channel) else 'group',
+            'sender_id': str(getattr(sender, 'id', 0)),
+            'sender_name': (getattr(sender, 'first_name', '') + ' ' + getattr(sender, 'last_name', '')).strip() or 'Nieznany',
+            'timestamp': event.date.isoformat(),
+            'received_at': datetime.now(message_timezone).isoformat(),
             'is_new': True,
-            'media': media_list
+            'media': media_list,
+            'parent_message_id': str(parent_id) if parent_id else None, # ID głównej wiadomości
+            'is_topic_main': parent_id is None or parent_id == topic_id # Flaga czy to start wątku
         }
-        
-        # Zapisujemy wiadomość do bazy danych
-        logger.info("Zapisuję wiadomość do bazy danych")
+
+        # Zapis i wysyłka (standardowo jak w Twoim kodzie)
         await save_message_to_db(message_data)
-        logger.info("Wiadomość zapisana w bazie danych")
-        
-        # Przygotowujemy dane do wysyłki przez WebSocket i do bufora
-        websocket_data = message_data.copy()
-        websocket_data['timestamp'] = websocket_data['timestamp'].isoformat()
-        websocket_data['received_at'] = websocket_data['received_at'].isoformat()
-        
-        logger.info("Dodaję wiadomość do historii")
-        message_history.append(websocket_data)
-        
-        logger.info("Wysyłam wiadomość przez WebSocket")
-        await broadcast_message(websocket_data)
-        logger.info("Wiadomość wysłana przez WebSocket")
-        
-        # Sprawdzamy czy wiadomość pochodzi z kanału z listy DEGEN_GEMS_CHANNEL_LIST
-        if any(channel_name.lower() in chat_title.lower() for channel_name in DEGEN_GEMS_CHANNEL_LIST):
-            logger.info(f"Wiadomość z kanału {chat_title} zawiera nazwę z listy degen - wysyłam na degen webhook")
-            await send_to_webhook(websocket_data, N8N_DEGEN_WEBHOOK_URL)
+        message_history.append(message_data)
+        await broadcast_message(message_data)
+
+        # Degen filter
+        if any(channel_name.lower() in full_display_title.lower() for channel_name in DEGEN_GEMS_CHANNEL_LIST):
+            await send_to_webhook(message_data, N8N_DEGEN_WEBHOOK_URL)
         else:
-            # Wysyłamy na standardowy webhook
-            logger.info("Wysyłam wiadomość na standardowy webhook")
-            await send_to_webhook(websocket_data)
-        
+            await send_to_webhook(message_data)
+
     except Exception as e:
-        logger.error(f"Błąd podczas przetwarzania wiadomości: {str(e)}")
-        logger.exception(e)  # Dodajemy pełny stacktrace błędu
-    
-    logger.info("=== handle_new_message END ===")
+        logger.error(f"Błąd w handle_new_message: {str(e)}")
+        logger.exception(e)
 
 
 # Funkcja do zapisu zbuforowanego albumu
@@ -889,7 +838,7 @@ async def wait_for_bot_response(client, chat_id, message_to_send=None, timeout=1
             # Czekamy na odpowiedź
             response = await conv.get_response()
             degen_logger.info(f"Otrzymano odpowiedź od bota: {response.text}")
-            
+
             # Sprawdzamy czy wiadomość ma przyciski
             if response.reply_markup and hasattr(response.reply_markup, 'rows'):
                 degen_logger.info("Wykryto przyciski w odpowiedzi bota")
@@ -974,7 +923,7 @@ async def send_message_to_sol_channel(message):
         address = message.split('\n')[1].split(': ')[1]  # Wyciągamy adres z wiadomości
         degen_logger.info(f"Wysyłam adres: {address}")
         bot_response = await wait_for_bot_response(client, chat_id, address)
-        
+
         # Klikamy przycisk z konfiguracji
         degen_logger.info(f"Próbuję kliknąć przycisk: {button_text}")
         await click_button(client, bot_response, button_text)
@@ -1054,10 +1003,10 @@ async def handle_degen_move(request):
             )
 
         degen_logger.info(f"Przetwarzanie degen move dla adresu {address} na łańcuchu {chain}")
-        
+
         # Przygotowanie wiadomości
         message = f"Nowy degen move!\nAdres: {address}\nŁańcuch: {chain}"
-        
+
         # Wysyłka wiadomości do odpowiedniego kanału
         try:
             if chain == 'Base':
@@ -1066,7 +1015,7 @@ async def handle_degen_move(request):
                 await send_message_to_eth_channel(message)
             elif chain == 'SOL':
                 await send_message_to_sol_channel(message)
-            
+
             degen_logger.info(f"Wiadomość wysłana do kanału dla łańcucha {chain}")
         except Exception as e:
             degen_logger.error(f"Błąd podczas wysyłania wiadomości do kanału: {str(e)}")
@@ -1075,7 +1024,7 @@ async def handle_degen_move(request):
                 {'error': 'Błąd podczas wysyłania wiadomości do kanału'},
                 status=500
             )
-        
+
         return web.json_response({
             'status': 'success',
             'message': f'Przetworzono degen move dla {address} na {chain}'
@@ -1094,7 +1043,6 @@ async def handle_degen_move(request):
             {'error': 'Wewnętrzny błąd serwera'},
             status=500
         )
-
 
 async def main():
     """Główna funkcja programu"""
