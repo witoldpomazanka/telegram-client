@@ -71,6 +71,55 @@ for i in range(0, len(chain_channel_pairs), 3):
 IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
 IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
 
+def parse_allowed_senders_spec(spec: str):
+    """
+    Format:
+      - "Prywatny,Kieobasa" -> allow proste nazwy czatów/kanałów
+      - "[GRUPA]TOPIC"      -> allow tylko TOPIC (forum topic) w GRUPA
+    """
+    allowed_simple = set()
+    allowed_group_topics = {}
+    if not spec:
+        return allowed_simple, allowed_group_topics
+
+    for raw in spec.split(','):
+        token = raw.strip()
+        if not token:
+            continue
+
+        if token.startswith('[') and ']' in token:
+            close_idx = token.find(']')
+            group = token[1:close_idx].strip()
+            topic = token[close_idx + 1:].strip()
+            if group and topic:
+                allowed_group_topics.setdefault(group, set()).add(topic)
+            else:
+                allowed_simple.add(token)
+        else:
+            allowed_simple.add(token)
+
+    return allowed_simple, allowed_group_topics
+
+
+def is_allowed_by_spec(*, allowed_simple, allowed_group_topics, main_chat_title, full_display_title, chat_username, topic_name):
+    candidates = {main_chat_title, full_display_title}
+    if chat_username:
+        candidates.add(chat_username)
+
+    if allowed_simple and (candidates & allowed_simple):
+        hit = next(iter(candidates & allowed_simple))
+        return True, f"simple_match={hit!r}"
+
+    if allowed_group_topics and main_chat_title in allowed_group_topics:
+        if topic_name and topic_name in allowed_group_topics[main_chat_title]:
+            return True, f"group_topic_match={main_chat_title!r}[{topic_name!r}]"
+        return False, f"group_topic_miss group={main_chat_title!r} topic={topic_name!r} allowed_topics={sorted(allowed_group_topics[main_chat_title])!r}"
+
+    if allowed_simple or allowed_group_topics:
+        return False, f"no_match candidates={sorted(candidates)!r}"
+
+    return True, "no_allowlist_configured"
+
 # Dane do połączenia z bazą PostgreSQL
 PG_USER = os.getenv('POSTGRES_USER')
 PG_PASSWORD = os.getenv('POSTGRES_PASSWORD')
@@ -581,22 +630,62 @@ async def handle_new_message(event):
         if event.message.reply_to and hasattr(event.message.reply_to, 'reply_to_top_id'):
             topic_id = event.message.reply_to.reply_to_top_id
             if getattr(chat, 'forum', False) and topic_id:
-                name = await get_topic_name(event.chat_id, topic_id)
-                topic_suffix = f" [{name}]"
+                topic_name = await get_topic_name(event.chat_id, topic_id)
+                topic_suffix = f" [{topic_name}]"
+            else:
+                topic_name = None
+        else:
+            topic_name = None
 
         full_display_title = f"{main_chat_title}{topic_suffix}"
 
         # 2. ZAMIANA IGNOROWANYCH NA ALLOWED (Biała lista)
         # Pobieramy ALLOWED_SENDERS z .env
         allowed_env = os.getenv('ALLOWED_SENDERS', '')
-        allowed_list = [s.strip() for s in allowed_env.split(',') if s.strip()]
+        allowed_simple, allowed_group_topics = parse_allowed_senders_spec(allowed_env)
+        chat_username = getattr(chat, 'username', '') or ''
 
-        if allowed_list:
-            # Sprawdzamy czy nazwa czatu, pełna nazwa z tematem lub username są na liście
-            is_allowed = any(x in [main_chat_title, full_display_title, getattr(chat, 'username', '')] for x in allowed_list)
-            if not is_allowed:
-                logger.info(f"Pomijam - {full_display_title} nie jest na liście ALLOWED")
-                return
+        msg_preview = (event.raw_text or '').replace('\n', '\\n')
+        if len(msg_preview) > 300:
+            msg_preview = msg_preview[:300] + "…"
+
+        details = {
+            "decision_stage": "pre_allowlist",
+            "chat_id": str(getattr(chat, 'id', None)),
+            "chat_title": getattr(chat, 'title', None),
+            "chat_username": chat_username,
+            "chat_forum": bool(getattr(chat, 'forum', False)),
+            "main_chat_title": main_chat_title,
+            "topic_id": topic_id,
+            "topic_name": topic_name,
+            "full_display_title": full_display_title,
+            "event_chat_id": str(getattr(event, 'chat_id', None)),
+            "message_id": str(getattr(event.message, 'id', None)),
+            "sender_id": str(getattr(sender, 'id', None)),
+            "sender_username": getattr(sender, 'username', None),
+            "sender_name": ((getattr(sender, 'first_name', '') + ' ' + getattr(sender, 'last_name', '')).strip() or None),
+            "date": event.date.isoformat() if getattr(event, 'date', None) else None,
+            "has_media": bool(getattr(event.message, 'media', None)),
+            "text_len": len(event.raw_text or ''),
+            "text_preview": msg_preview,
+            "allowed_env": allowed_env,
+            "allowed_simple": sorted(allowed_simple),
+            "allowed_group_topics": {k: sorted(v) for k, v in allowed_group_topics.items()},
+        }
+        logger.info("MSG_CHECK %s", json.dumps(details, ensure_ascii=False))
+
+        allowed, reason = is_allowed_by_spec(
+            allowed_simple=allowed_simple,
+            allowed_group_topics=allowed_group_topics,
+            main_chat_title=main_chat_title,
+            full_display_title=full_display_title,
+            chat_username=chat_username,
+            topic_name=topic_name,
+        )
+        if not allowed:
+            logger.info("MSG_SKIP %s reason=%s", full_display_title, reason)
+            return
+        logger.info("MSG_ACCEPT %s reason=%s", full_display_title, reason)
 
         # 3. IDENTYFIKACJA WIADOMOŚCI NADRZĘDNEJ (Parent)
         # parent_id to ID wiadomości, na którą ktoś odpisał (jeśli dotyczy)
