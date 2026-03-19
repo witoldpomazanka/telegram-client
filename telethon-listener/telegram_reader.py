@@ -433,151 +433,8 @@ async def mark_all_messages_as_old():
 
 async def load_historical_messages():
     """Pobiera historyczne wiadomości z Telegrama i zapisuje je do bazy danych"""
-    logger.info("=== load_historical_messages ===")
-    global client
-    try:
-        if not client.is_connected() or not await client.is_user_authorized():
-            logger.warning("Klient nie jest połączony lub wymaga autoryzacji")
-            return False
-
-        # Pobieramy ALLOWED_SENDERS z .env
-        allowed_env = os.getenv('ALLOWED_SENDERS', '')
-        allowed_simple, allowed_group_topics = parse_allowed_senders_spec(allowed_env)
-
-        latest_timestamp = await get_latest_message_timestamp()
-        added_messages = 0
-        async for dialog in client.iter_dialogs():
-            # Wstępne sprawdzenie dialogu (tylko simple match, bo topic sprawdzimy przy wiadomościach)
-            chat = dialog.entity
-            chat_username = getattr(chat, 'username', '') or ''
-            main_chat_title = (
-                getattr(chat, 'title', None)
-                or getattr(chat, 'username', None)
-                or 'Prywatny'
-            )
-
-            # Jeśli mamy białą listę i ten czat w ogóle nie pasuje do prostych reguł
-            # ani nie jest bazą dla reguł grupowych topikowych, to możemy go potencjalnie pominąć.
-            # Ale bezpieczniej wejść w iter_messages jeśli main_chat_title jest w allowed_group_topics.
-
-            can_skip_dialog = False
-            if allowed_simple or allowed_group_topics:
-                # Sprawdzamy czy chat w ogóle ma szansę przejść
-                is_in_group_topics = main_chat_title in allowed_group_topics
-                candidates = {c for c in {main_chat_title, chat_username} if c}
-                is_in_simple = bool(candidates & allowed_simple)
-
-                if not is_in_group_topics and not is_in_simple:
-                    # logger.info(f"Pomijanie dialogu: {main_chat_title}")
-                    continue
-
-            messages_to_process = []
-            async for message in client.iter_messages(dialog.id, limit=100):
-                if latest_timestamp and message.date <= latest_timestamp:
-                    continue
-
-                # Specyficzne sprawdzenie dla każdej wiadomości (szczególnie ważne dla Topics)
-                topic_id = None
-                topic_name = None
-                if message.reply_to and hasattr(message.reply_to, 'reply_to_top_id'):
-                    topic_id = message.reply_to.reply_to_top_id
-                    if getattr(chat, 'forum', False) and topic_id:
-                        topic_name = await get_topic_name(chat.id, topic_id)
-
-                full_display_title = main_chat_title
-                if topic_name:
-                    full_display_title += f" [{topic_name}]"
-
-                sender = await message.get_sender()
-                sender_name_str = ((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or None
-
-                allowed, reason = is_allowed_by_spec(
-                    allowed_simple=allowed_simple,
-                    allowed_group_topics=allowed_group_topics,
-                    main_chat_title=main_chat_title,
-                    full_display_title=full_display_title,
-                    chat_username=chat_username,
-                    topic_name=topic_name,
-                    sender_name=sender_name_str,
-                )
-
-                if allowed:
-                    messages_to_process.append((message, full_display_title, topic_name, sender_name_str))
-
-            # --- BUFOROWANIE ALBUMÓW ---
-            grouped_buffer = {}
-            for message, full_display_title, topic_name, sender_name_str in messages_to_process:
-                try:
-                    chat = await message.get_chat()
-                    # Określamy typ czatu dla każdej wiadomości
-                    chat_type = 'unknown'
-                    if isinstance(chat, User):
-                        chat_type = 'private'
-                    elif isinstance(chat, Chat):
-                        chat_type = 'group'
-                    elif isinstance(chat, Channel):
-                        if getattr(chat, 'broadcast', False):
-                            chat_type = 'channel'
-                        else:
-                            chat_type = 'supergroup'
-                    sender = await message.get_sender()
-                    sender_name = getattr(sender, 'first_name', '') if sender else ''
-                    if sender and getattr(sender, 'last_name', None):
-                        sender_name += ' ' + sender.last_name
-                    message_timezone = message.date.tzinfo
-                    media_list = await get_media_from_message(message)
-                    grouped_id = getattr(message, 'grouped_id', None)
-                    chat_id = str(chat.id)
-                    if grouped_id:
-                        key = (chat_id, str(grouped_id))
-                        if key not in grouped_buffer:
-                            grouped_buffer[key] = {
-                                'message': message.text or '',
-                                'chat_id': chat_id,
-                                'chat_title': full_display_title,
-                                'chat_type': chat_type,
-                                'sender_id': str(sender.id if sender else 0),
-                                'sender_name': sender_name_str or 'Nieznany',
-                                'timestamp': message.date,
-                                'received_at': datetime.now(message_timezone),
-                                'is_new': False,
-                                'media': []
-                            }
-                        grouped_buffer[key]['media'].extend(media_list)
-                        # Aktualizuj timestamp na najnowszy
-                        grouped_buffer[key]['timestamp'] = message.date
-                        grouped_buffer[key]['received_at'] = datetime.now(message_timezone)
-                    else:
-                        message_data = {
-                            'message': message.text or '',
-                            'chat_id': chat_id,
-                            'chat_title': full_display_title,
-                            'chat_type': chat_type,
-                            'sender_id': str(sender.id if sender else 0),
-                            'sender_name': sender_name_str or 'Nieznany',
-                            'timestamp': message.date,
-                            'received_at': datetime.now(message_timezone),
-                            'is_new': False,
-                            'media': media_list
-                        }
-                        await save_message_to_db(message_data)
-                        added_messages += 1
-                except Exception as e:
-                    logger.error(f"Błąd podczas przetwarzania wiadomości historycznej: {str(e)}")
-                    logger.exception(e)
-            # Po przetworzeniu wszystkich wiadomości z dialogu, zapisz albumy
-            for grouped in grouped_buffer.values():
-                await save_message_to_db(grouped)
-                added_messages += 1
-        logger.info(f"Dodano {added_messages} nowych wiadomości do bazy danych")
-        await load_messages_from_db()
-        await mark_all_messages_as_old()
-        return True
-    except Exception as e:
-        logger.error(f"Błąd podczas ładowania historycznych wiadomości: {str(e)}")
-        logger.exception(e)
-        return False
-
+    logger.info("=== load_historical_messages (POMINIĘTO) ===")
+    return True
 
 async def send_to_webhook(data, webhook_url=None):
     """Wysyła dane do webhooka"""
@@ -768,13 +625,17 @@ async def save_grouped_message(key):
         await save_message_to_db(grouped)
         # Przygotuj dane do WebSocket i webhooka
         websocket_data = grouped.copy()
-        websocket_data['timestamp'] = websocket_data['timestamp'].isoformat()
-        websocket_data['received_at'] = websocket_data['received_at'].isoformat()
+        if isinstance(websocket_data['timestamp'] , datetime):
+            websocket_data['timestamp'] = websocket_data['timestamp'].isoformat()
+        if isinstance(websocket_data['received_at'], datetime):
+            websocket_data['received_at'] = websocket_data['received_at'].isoformat()
+            
         message_history.append(websocket_data)
         await broadcast_message(websocket_data)
 
-        # Wysyłamy na webhook bez dodatkowego zagnieżdżenia
-        await send_to_webhook(websocket_data)
+        # Wysyłamy na webhook tylko jeśli to główny wątek/nowa wiadomość
+        if grouped.get('is_topic_main'):
+            await send_to_webhook(websocket_data)
 
 
 async def handle_messages(request):
@@ -1025,8 +886,6 @@ async def main():
     # Uruchomienie klienta
     try:
         if client and await client.is_user_authorized():
-            # Pobieranie historycznych wiadomości tylko jeśli klient jest zautoryzowany
-            await load_historical_messages()
             # Uruchamiamy klienta tylko jeśli jest zautoryzowany
             await client.run_until_disconnected()
         else:
@@ -1036,7 +895,6 @@ async def main():
                 await asyncio.sleep(5)  # Sprawdzamy co 5 sekund
                 if client and await client.is_user_authorized():
                     logger.info("Klient został zautoryzowany!")
-                    await load_historical_messages()
                     await client.run_until_disconnected()
                     break
     except Exception as e:
