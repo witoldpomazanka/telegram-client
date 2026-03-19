@@ -533,6 +533,19 @@ async def handle_new_message(event):
 
         full_display_title = f"{main_chat_title}{topic_suffix}"
 
+        # --- NOWY FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI) ---
+        # Sprawdzamy czy wiadomość jest odpowiedzią (reply) do innej wiadomości
+        # W grupach typu Forum, pierwsza wiadomość w temacie ma reply_to_msg_id == topic_id
+        # W zwykłych czatach, nowa wiadomość nie ma reply_to_msg_id.
+        reply_to_msg_id = event.message.reply_to.reply_to_msg_id if event.message.reply_to else None
+        
+        # Jeśli to jest odpowiedź na coś innego niż ID tematu (lub po prostu jest odpowiedzią w zwykłym czacie), to ignorujemy.
+        is_topic_main = (reply_to_msg_id is None) or (topic_id is not None and reply_to_msg_id == topic_id)
+        
+        if not is_topic_main:
+            # logger.info("MSG_SKIP: Wiadomość jest odpowiedzią (reply_to_msg_id=%s, topic_id=%s)", reply_to_msg_id, topic_id)
+            return
+
         # 2. ZAMIANA IGNOROWANYCH NA ALLOWED (Biała lista)
         # Pobieramy ALLOWED_SENDERS z .env
         allowed_env = os.getenv('ALLOWED_SENDERS', '')
@@ -582,10 +595,6 @@ async def handle_new_message(event):
             return
         logger.info("ZAAKCEPTOWANO [%s]: %s", full_display_title, (event.raw_text or 'MEDIA/BRAK TEKSTU').replace('\n', ' '))
 
-        # 3. IDENTYFIKACJA WIADOMOŚCI NADRZĘDNEJ (Parent)
-        # parent_id to ID wiadomości, na którą ktoś odpisał (jeśli dotyczy)
-        parent_id = event.message.reply_to.reply_to_msg_id if event.message.reply_to else None
-
         message_timezone = event.date.tzinfo
         media_list = await get_media_from_message(event)
 
@@ -601,8 +610,8 @@ async def handle_new_message(event):
             'received_at': datetime.now(message_timezone).isoformat(),
             'is_new': True,
             'media': media_list,
-            'parent_message_id': str(parent_id) if parent_id else None, # ID głównej wiadomości
-            'is_topic_main': parent_id is None or parent_id == topic_id # Flaga czy to start wątku
+            'parent_message_id': str(reply_to_msg_id) if reply_to_msg_id else None, # ID głównej wiadomości
+            'is_topic_main': True # Zawsze True tutaj, bo odfiltrowaliśmy resztę wyżej
         }
 
         # Zapis i wysyłka (standardowo jak w Twoim kodzie)
