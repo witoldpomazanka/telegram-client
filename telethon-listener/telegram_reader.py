@@ -440,17 +440,73 @@ async def load_historical_messages():
             logger.warning("Klient nie jest połączony lub wymaga autoryzacji")
             return False
 
+        # Pobieramy ALLOWED_SENDERS z .env
+        allowed_env = os.getenv('ALLOWED_SENDERS', '')
+        allowed_simple, allowed_group_topics = parse_allowed_senders_spec(allowed_env)
+
         latest_timestamp = await get_latest_message_timestamp()
         added_messages = 0
         async for dialog in client.iter_dialogs():
+            # Wstępne sprawdzenie dialogu (tylko simple match, bo topic sprawdzimy przy wiadomościach)
+            chat = dialog.entity
+            chat_username = getattr(chat, 'username', '') or ''
+            main_chat_title = (
+                getattr(chat, 'title', None)
+                or getattr(chat, 'username', None)
+                or 'Prywatny'
+            )
+
+            # Jeśli mamy białą listę i ten czat w ogóle nie pasuje do prostych reguł
+            # ani nie jest bazą dla reguł grupowych topikowych, to możemy go potencjalnie pominąć.
+            # Ale bezpieczniej wejść w iter_messages jeśli main_chat_title jest w allowed_group_topics.
+
+            can_skip_dialog = False
+            if allowed_simple or allowed_group_topics:
+                # Sprawdzamy czy chat w ogóle ma szansę przejść
+                is_in_group_topics = main_chat_title in allowed_group_topics
+                candidates = {c for c in {main_chat_title, chat_username} if c}
+                is_in_simple = bool(candidates & allowed_simple)
+
+                if not is_in_group_topics and not is_in_simple:
+                    # logger.info(f"Pomijanie dialogu: {main_chat_title}")
+                    continue
+
             messages_to_process = []
             async for message in client.iter_messages(dialog.id, limit=100):
                 if latest_timestamp and message.date <= latest_timestamp:
                     continue
-                messages_to_process.append(message)
+
+                # Specyficzne sprawdzenie dla każdej wiadomości (szczególnie ważne dla Topics)
+                topic_id = None
+                topic_name = None
+                if message.reply_to and hasattr(message.reply_to, 'reply_to_top_id'):
+                    topic_id = message.reply_to.reply_to_top_id
+                    if getattr(chat, 'forum', False) and topic_id:
+                        topic_name = await get_topic_name(chat.id, topic_id)
+
+                full_display_title = main_chat_title
+                if topic_name:
+                    full_display_title += f" [{topic_name}]"
+
+                sender = await message.get_sender()
+                sender_name_str = ((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or None
+
+                allowed, reason = is_allowed_by_spec(
+                    allowed_simple=allowed_simple,
+                    allowed_group_topics=allowed_group_topics,
+                    main_chat_title=main_chat_title,
+                    full_display_title=full_display_title,
+                    chat_username=chat_username,
+                    topic_name=topic_name,
+                    sender_name=sender_name_str,
+                )
+
+                if allowed:
+                    messages_to_process.append((message, full_display_title, topic_name, sender_name_str))
+
             # --- BUFOROWANIE ALBUMÓW ---
             grouped_buffer = {}
-            for message in messages_to_process:
+            for message, full_display_title, topic_name, sender_name_str in messages_to_process:
                 try:
                     chat = await message.get_chat()
                     # Określamy typ czatu dla każdej wiadomości
@@ -478,10 +534,10 @@ async def load_historical_messages():
                             grouped_buffer[key] = {
                                 'message': message.text or '',
                                 'chat_id': chat_id,
-                                'chat_title': getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny',
+                                'chat_title': full_display_title,
                                 'chat_type': chat_type,
                                 'sender_id': str(sender.id if sender else 0),
-                                'sender_name': sender_name or 'Nieznany',
+                                'sender_name': sender_name_str or 'Nieznany',
                                 'timestamp': message.date,
                                 'received_at': datetime.now(message_timezone),
                                 'is_new': False,
@@ -495,10 +551,10 @@ async def load_historical_messages():
                         message_data = {
                             'message': message.text or '',
                             'chat_id': chat_id,
-                            'chat_title': getattr(chat, 'title', None) or getattr(chat, 'username', None) or 'Prywatny',
+                            'chat_title': full_display_title,
                             'chat_type': chat_type,
                             'sender_id': str(sender.id if sender else 0),
-                            'sender_name': sender_name or 'Nieznany',
+                            'sender_name': sender_name_str or 'Nieznany',
                             'timestamp': message.date,
                             'received_at': datetime.now(message_timezone),
                             'is_new': False,
