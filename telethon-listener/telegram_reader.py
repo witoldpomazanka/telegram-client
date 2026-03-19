@@ -653,7 +653,7 @@ async def handle_new_message(event):
             "allowed_simple": sorted(allowed_simple),
             "allowed_group_topics": {k: sorted(v) for k, v in allowed_group_topics.items()},
         }
-        logger.info("MSG_CHECK %s", json.dumps(details, ensure_ascii=False))
+        # logger.info("MSG_CHECK %s", json.dumps(details, ensure_ascii=False))
 
         allowed, reason = is_allowed_by_spec(
             allowed_simple=allowed_simple,
@@ -665,9 +665,9 @@ async def handle_new_message(event):
             sender_name=sender_name_str,
         )
         if not allowed:
-            logger.info("MSG_SKIP %s reason=%s", full_display_title, reason)
+            # logger.info("MSG_SKIP %s reason=%s", full_display_title, reason)
             return
-        logger.info("MSG_ACCEPT %s reason=%s", full_display_title, reason)
+        logger.info("ZAAKCEPTOWANO [%s]: %s", full_display_title, (event.raw_text or 'MEDIA/BRAK TEKSTU').replace('\n', ' '))
 
         # 3. IDENTYFIKACJA WIADOMOŚCI NADRZĘDNEJ (Parent)
         # parent_id to ID wiadomości, na którą ktoś odpisał (jeśli dotyczy)
