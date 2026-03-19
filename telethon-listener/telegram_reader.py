@@ -76,10 +76,9 @@ def parse_allowed_senders_spec(spec: str):
     return allowed_simple, allowed_group_topics
 
 
-def is_allowed_by_spec(*, allowed_simple, allowed_group_topics, main_chat_title, full_display_title, chat_username, topic_name):
-    candidates = {main_chat_title, full_display_title}
-    if chat_username:
-        candidates.add(chat_username)
+def is_allowed_by_spec(*, allowed_simple, allowed_group_topics, main_chat_title, full_display_title, chat_username, topic_name, sender_name=None):
+    # Zbieramy kandydatów do porównania - filtrujemy None żeby sorted() działał
+    candidates = {c for c in {main_chat_title, full_display_title, chat_username, sender_name} if c}
 
     if allowed_simple and (candidates & allowed_simple):
         hit = next(iter(candidates & allowed_simple))
@@ -597,7 +596,14 @@ async def handle_new_message(event):
         sender = await event.get_sender()
 
         # 1. Identyfikacja czatu i TEMATU (Topic/Forum)
-        main_chat_title = getattr(chat, 'title', None) or getattr(chat, 'username', 'Prywatny')
+        # Dla prywatnych czatów (User) title i username mogą być None - fallback na imię sendera
+        sender_name_str = ((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or None
+        main_chat_title = (
+            getattr(chat, 'title', None)
+            or getattr(chat, 'username', None)
+            or sender_name_str
+            or 'Prywatny'
+        )
         topic_id = None
         topic_suffix = ""
 
@@ -656,6 +662,7 @@ async def handle_new_message(event):
             full_display_title=full_display_title,
             chat_username=chat_username,
             topic_name=topic_name,
+            sender_name=sender_name_str,
         )
         if not allowed:
             logger.info("MSG_SKIP %s reason=%s", full_display_title, reason)
