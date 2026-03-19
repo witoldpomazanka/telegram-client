@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeImageSize, DocumentAttributeFilename
 from telethon.tl.types import User, Channel, Chat
-from telethon.tl.functions.messages import GetBotCallbackAnswerRequest
 from telethon.tl.types import MessageReplyHeader
 from telethon.tl.functions.channels import GetForumTopicsRequest
 
@@ -31,14 +30,6 @@ formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(messag
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
-# Logger dla operacji degen move
-degen_logger = logging.getLogger('degen_move')
-degen_logger.setLevel(logging.INFO)
-degen_handler = logging.StreamHandler(sys.stdout)
-degen_handler.setLevel(logging.INFO)
-degen_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-degen_handler.setFormatter(degen_formatter)
-degen_logger.addHandler(degen_handler)
 
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('telethon.network.mtprotosender').setLevel(logging.WARNING)
@@ -51,22 +42,6 @@ API_HASH = os.getenv('TELEGRAM_API_HASH')
 PHONE = os.getenv('TELEGRAM_PHONE')
 USERNAME = os.getenv('USERNAME')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
-N8N_DEGEN_WEBHOOK_URL = os.getenv('N8N_DEGEN_WEBHOOK_URL')
-DEGEN_GEMS_CHANNEL_NAMES = os.getenv('DEGEN_GEMS_CHANNEL_NAMES', '')
-DEGEN_GEMS_CHANNEL_LIST = [s.strip() for s in DEGEN_GEMS_CHANNEL_NAMES.split(',') if s.strip()]
-SUPPORTED_CHAINS = os.getenv('SUPPORTED_CHAINS', 'Base,ETH,SOL')
-SUPPORTED_CHAINS_LIST = [chain.strip() for chain in SUPPORTED_CHAINS.split(',')]
-CHAIN_TO_CHANNEL_MAPPING = os.getenv('CHAIN_TO_CHANNEL_MAPPING', 'Base,channel1,Buy 0.1 BASE,ETH,channel2,Buy 0.1 ETH,SOL,channel3,Buy 0.1 SOL')
-CHAIN_CHANNEL_MAP = {}
-
-# Przetwarzanie mapowania łańcuchów na kanały i przyciski
-chain_channel_pairs = [pair.strip() for pair in CHAIN_TO_CHANNEL_MAPPING.split(',')]
-for i in range(0, len(chain_channel_pairs), 3):
-    if i + 2 < len(chain_channel_pairs):
-        CHAIN_CHANNEL_MAP[chain_channel_pairs[i]] = {
-            'chat_id': chain_channel_pairs[i + 1],
-            'button_text': chain_channel_pairs[i + 2]
-        }
 
 IGNORED_SENDERS = os.getenv('IGNORED_SENDERS', '')
 IGNORED_SENDERS_LIST = [s.strip() for s in IGNORED_SENDERS.split(',') if s.strip()]
@@ -663,7 +638,7 @@ async def handle_new_message(event):
             "message_id": str(getattr(event.message, 'id', None)),
             "sender_id": str(getattr(sender, 'id', None)),
             "sender_username": getattr(sender, 'username', None),
-            "sender_name": ((getattr(sender, 'first_name', '') + ' ' + getattr(sender, 'last_name', '')).strip() or None),
+            "sender_name": (((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or None),
             "date": event.date.isoformat() if getattr(event, 'date', None) else None,
             "has_media": bool(getattr(event.message, 'media', None)),
             "text_len": len(event.raw_text or ''),
@@ -701,7 +676,7 @@ async def handle_new_message(event):
             'chat_title': full_display_title, # Tu będzie np. "Trading PRO [Sygnały]"
             'chat_type': 'channel' if isinstance(chat, Channel) else 'group',
             'sender_id': str(getattr(sender, 'id', 0)),
-            'sender_name': (getattr(sender, 'first_name', '') + ' ' + getattr(sender, 'last_name', '')).strip() or 'Nieznany',
+            'sender_name': ((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or 'Nieznany',
             'timestamp': event.date.isoformat(),
             'received_at': datetime.now(message_timezone).isoformat(),
             'is_new': True,
@@ -715,11 +690,7 @@ async def handle_new_message(event):
         message_history.append(message_data)
         await broadcast_message(message_data)
 
-        # Degen filter
-        if any(channel_name.lower() in full_display_title.lower() for channel_name in DEGEN_GEMS_CHANNEL_LIST):
-            await send_to_webhook(message_data, N8N_DEGEN_WEBHOOK_URL)
-        else:
-            await send_to_webhook(message_data)
+        await send_to_webhook(message_data)
 
     except Exception as e:
         logger.error(f"Błąd w handle_new_message: {str(e)}")
@@ -907,233 +878,8 @@ async def reload_messages(request):
         return web.json_response({'success': False, 'error': str(e)})
 
 
-async def send_message_to_base_channel(message):
-    """Wysyła wiadomość do kanału Base"""
-    logger.info("Implementacja wysyłki do kanału Base")
-    # TODO: Implementacja
-
-async def send_message_to_eth_channel(message):
-    """Wysyła wiadomość do kanału ETH"""
-    logger.info("Implementacja wysyłki do kanału ETH")
-    # TODO: Implementacja
-
-async def wait_for_bot_response(client, chat_id, message_to_send=None, timeout=10):
-    """Czeka na odpowiedź od bota w określonym czacie"""
-    try:
-        async with client.conversation(chat_id, timeout=timeout) as conv:
-            if message_to_send:
-                # Wysyłamy wiadomość w kontekście konwersacji
-                await conv.send_message(message_to_send)
-            # Czekamy na odpowiedź
-            response = await conv.get_response()
-            degen_logger.info(f"Otrzymano odpowiedź od bota: {response.text}")
-
-            # Sprawdzamy czy wiadomość ma przyciski
-            if response.reply_markup and hasattr(response.reply_markup, 'rows'):
-                degen_logger.info("Wykryto przyciski w odpowiedzi bota")
-                return response
-            return response
-    except Exception as e:
-        degen_logger.error(f"Błąd podczas oczekiwania na odpowiedź bota: {str(e)}")
-        raise
-
-async def click_button(client, message, button_text):
-    """Klika przycisk o określonej treści w wiadomości"""
-    try:
-        if not message.reply_markup or not hasattr(message.reply_markup, 'rows'):
-            degen_logger.error("Brak przycisków w wiadomości")
-            return None
-
-        # Logujemy wszystkie dostępne przyciski
-        degen_logger.info("Dostępne przyciski:")
-        for row_idx, row in enumerate(message.reply_markup.rows):
-            for button_idx, button in enumerate(row.buttons):
-                degen_logger.info(f"Rząd {row_idx + 1}, Przycisk {button_idx + 1}:")
-                degen_logger.info(f"  - Tekst: {button.text}")
-                degen_logger.info(f"  - Typ: {type(button).__name__}")
-                if hasattr(button, 'data'):
-                    degen_logger.info(f"  - Data: {button.data}")
-
-        # Szukamy przycisku o określonej treści
-        for row in message.reply_markup.rows:
-            for button in row.buttons:
-                if button.text == button_text:
-                    degen_logger.info(f"Znaleziono przycisk: {button_text}")
-                    # Klikanie przycisku poprzez callback_query
-                    await client(GetBotCallbackAnswerRequest(
-                        peer=message.peer_id,
-                        msg_id=message.id,
-                        data=button.data
-                    ))
-                    return True
-
-        degen_logger.error(f"Nie znaleziono przycisku o treści: {button_text}")
-        return None
-    except Exception as e:
-        degen_logger.error(f"Błąd podczas klikania przycisku: {str(e)}")
-        raise
-
-async def send_message_to_sol_channel(message):
-    """Wysyła sekwencję wiadomości do kanału SOL"""
-    try:
-        global client
-        if not client or not client.is_connected():
-            degen_logger.error("Klient Telegram nie jest połączony")
-            raise Exception("Klient Telegram nie jest połączony")
-
-        # Pobieramy chat_id i tekst przycisku z mapowania
-        chain_config = CHAIN_CHANNEL_MAP.get('SOL')
-        if not chain_config:
-            degen_logger.error("Brak skonfigurowanego chat_id dla łańcucha SOL")
-            raise Exception("Brak skonfigurowanego chat_id dla łańcucha SOL")
-
-        chat_name = chain_config['chat_id']
-        button_text = chain_config['button_text']
-
-        # Szukamy konwersacji po nazwie
-        degen_logger.info(f"Szukam konwersacji o nazwie: {chat_name}")
-        async for dialog in client.iter_dialogs():
-            if dialog.name == chat_name:
-                chat_id = dialog.id
-                degen_logger.info(f"Znaleziono konwersację o ID: {chat_id}")
-                break
-        else:
-            degen_logger.error(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
-            raise Exception(f"Nie znaleziono konwersacji o nazwie: {chat_name}")
-
-        degen_logger.info(f"Wysyłam sekwencję wiadomości do kanału SOL (chat_id: {chat_id}, przycisk: {button_text})")
-
-        # Pierwsza wiadomość - komenda /buy_sell
-        degen_logger.info("Wysyłam komendę /buy_sell")
-        bot_response = await wait_for_bot_response(client, chat_id, "/buy_sell")
-        degen_logger.info(f"Otrzymano odpowiedź od bota: {bot_response.text}")
-
-        # Druga wiadomość - adres
-        address = message.split('\n')[1].split(': ')[1]  # Wyciągamy adres z wiadomości
-        degen_logger.info(f"Wysyłam adres: {address}")
-        bot_response = await wait_for_bot_response(client, chat_id, address)
-
-        # Klikamy przycisk z konfiguracji
-        degen_logger.info(f"Próbuję kliknąć przycisk: {button_text}")
-        await click_button(client, bot_response, button_text)
-
-        # Czekamy na potwierdzenie transakcji
-        degen_logger.info("Oczekuję na potwierdzenie transakcji")
-        transaction_confirmed = False
-        try:
-            # Sprawdzamy kilka kolejnych wiadomości
-            async for event in client.iter_messages(chat_id, limit=20, wait_time=65):
-                if event.sender_id == bot_response.sender_id:
-                    degen_logger.info(f"Otrzymano wiadomość: {event.text}")
-                    # Sprawdzamy czy to właściwe potwierdzenie transakcji
-                    if "The transaction executed successfully!" in event.text:
-                        degen_logger.info("Transakcja potwierdzona!")
-                        transaction_confirmed = True
-                        # Czekamy 10 sekund przed kliknięciem przycisku sprzedaży
-                        degen_logger.info("Czekam 10 sekund przed ustawieniem automatycznej sprzedaży...")
-                        await asyncio.sleep(10)
-                        # Czekamy na przyciski sprzedaży
-                        degen_logger.info("Oczekuję na przyciski sprzedaży")
-                        async for next_event in client.iter_messages(chat_id, limit=5, wait_time=65):
-                            if next_event.sender_id == bot_response.sender_id and next_event.reply_markup:
-                                degen_logger.info("Znaleziono przyciski sprzedaży")
-                                # Szukamy przycisku "At 100% Rise Sell 50%"
-                                for row in next_event.reply_markup.rows:
-                                    for button in row.buttons:
-                                        if button.text == "At 100% Rise Sell 50%":
-                                            degen_logger.info("Klikam przycisk sprzedaży")
-                                            await click_button(client, next_event, "At 100% Rise Sell 50%")
-                                            return True
-                        break
-        except Exception as e:
-            degen_logger.error(f"Błąd podczas oczekiwania na potwierdzenie transakcji: {str(e)}")
-            raise
-
-        if not transaction_confirmed:
-            degen_logger.error("Nie otrzymano potwierdzenia transakcji")
-            raise Exception("Nie otrzymano potwierdzenia transakcji")
-
-        degen_logger.info("Sekwencja wiadomości dla SOL zakończona pomyślnie")
-        return True
-
-    except Exception as e:
-        degen_logger.error(f"Błąd podczas wysyłania wiadomości do kanału SOL: {str(e)}")
-        logger.exception(e)
-        raise
-
-async def handle_degen_move(request):
-    """Obsługa endpointu /degen-move"""
-    try:
-        data = await request.json()
-        degen_logger.info(f"Otrzymano request /degen-move z danymi: {data}")
-
-        # Sprawdzenie czy to invalid content
-        if data.get('content') == 'invalid':
-            degen_logger.info("Otrzymano invalid content - pomijam")
-            return web.json_response({'status': 'ignored'})
-
-        # Sprawdzenie czy mamy wymagane pola
-        if 'address' not in data or 'chain' not in data:
-            degen_logger.error("Brak wymaganych pól w payload")
-            return web.json_response(
-                {'error': 'Brak wymaganych pól: address i chain'},
-                status=400
-            )
-
-        address = data['address']
-        chain = data['chain']
-
-        # Walidacja łańcucha
-        if chain not in SUPPORTED_CHAINS_LIST:
-            degen_logger.error(f"Nieobsługiwany łańcuch: {chain}")
-            return web.json_response(
-                {'error': f'Nieobsługiwany łańcuch. Obsługiwane: {", ".join(SUPPORTED_CHAINS_LIST)}'},
-                status=400
-            )
-
-        degen_logger.info(f"Przetwarzanie degen move dla adresu {address} na łańcuchu {chain}")
-
-        # Przygotowanie wiadomości
-        message = f"Nowy degen move!\nAdres: {address}\nŁańcuch: {chain}"
-
-        # Wysyłka wiadomości do odpowiedniego kanału
-        try:
-            if chain == 'Base':
-                await send_message_to_base_channel(message)
-            elif chain == 'ETH':
-                await send_message_to_eth_channel(message)
-            elif chain == 'SOL':
-                await send_message_to_sol_channel(message)
-
-            degen_logger.info(f"Wiadomość wysłana do kanału dla łańcucha {chain}")
-        except Exception as e:
-            degen_logger.error(f"Błąd podczas wysyłania wiadomości do kanału: {str(e)}")
-            logger.exception(e)
-            return web.json_response(
-                {'error': 'Błąd podczas wysyłania wiadomości do kanału'},
-                status=500
-            )
-
-        return web.json_response({
-            'status': 'success',
-            'message': f'Przetworzono degen move dla {address} na {chain}'
-        })
-
-    except json.JSONDecodeError:
-        degen_logger.error("Nieprawidłowy format JSON")
-        return web.json_response(
-            {'error': 'Nieprawidłowy format JSON'},
-            status=400
-        )
-    except Exception as e:
-        degen_logger.error(f"Błąd podczas przetwarzania requestu: {str(e)}")
-        logger.exception(e)
-        return web.json_response(
-            {'error': 'Wewnętrzny błąd serwera'},
-            status=500
-        )
-
 async def main():
+
     """Główna funkcja programu"""
     global client
 
@@ -1155,7 +901,6 @@ async def main():
     app.router.add_post('/verify_code', verify_code)
     app.router.add_get('/check_session', check_session)
     app.router.add_get('/reload', reload_messages)
-    app.router.add_post('/degen-move', handle_degen_move)  # Dodajemy nowy endpoint
 
     # Obsługa WebSocketa
     async def websocket_route_handler(request):
