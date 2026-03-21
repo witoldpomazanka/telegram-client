@@ -533,6 +533,15 @@ async def handle_new_message(event):
 
         full_display_title = f"{main_chat_title}{topic_suffix}"
 
+        # Ekstrakcja danych do logu "wszystko wszystko wszystko"
+        sender_id = str(getattr(sender, 'id', None))
+        sender_username = getattr(sender, 'username', None)
+        sender_display_name = (((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or "Brak")
+        message_text_raw = (event.raw_text or '').replace('\n', '\\n')
+        chat_id = str(getattr(chat, 'id', None))
+        
+        logger.info(f"NOWA WIADOMOŚĆ: Czat: {main_chat_title} ({chat_id}) | Temat: {topic_name or 'Brak'} | Nadawca: {sender_display_name} (@{sender_username or 'Brak'}, ID: {sender_id}) | Treść: {message_text_raw}")
+
         # --- NOWY FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI) ---
         # Sprawdzamy czy wiadomość jest odpowiedzią (reply) do innej wiadomości
         # W grupach typu Forum, pierwsza wiadomość w temacie ma reply_to_msg_id == topic_id
@@ -543,7 +552,7 @@ async def handle_new_message(event):
         is_topic_main = (reply_to_msg_id is None) or (topic_id is not None and reply_to_msg_id == topic_id)
         
         if not is_topic_main:
-            # logger.info("MSG_SKIP: Wiadomość jest odpowiedzią (reply_to_msg_id=%s, topic_id=%s)", reply_to_msg_id, topic_id)
+            logger.info(f"ODRZUCONO (REPLY): {full_display_title} | Powód: Wiadomość jest odpowiedzią (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})")
             return
 
         # 2. ZAMIANA IGNOROWANYCH NA ALLOWED (Biała lista)
@@ -591,7 +600,7 @@ async def handle_new_message(event):
             sender_name=sender_name_str,
         )
         if not allowed:
-            # logger.info("MSG_SKIP %s reason=%s", full_display_title, reason)
+            logger.info(f"ODRZUCONO (ALLOWLIST): {full_display_title} | Powód: {reason}")
             return
         logger.info("ZAAKCEPTOWANO [%s]: %s", full_display_title, (event.raw_text or 'MEDIA/BRAK TEKSTU').replace('\n', ' '))
 
