@@ -24,12 +24,27 @@ from telethon.tl.functions.channels import GetForumTopicsRequest
 # Konfiguracja logowania
 logger = logging.getLogger('telegram_reader')
 logger.setLevel(logging.INFO)
+
+# Formatter dla logów
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Handler dla konsoli (stdout)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 
+# Handler dla pliku (w katalogu /logs zamontowanym w Dockerze)
+LOGS_DIR = '/logs'
+if os.path.exists(LOGS_DIR):
+    try:
+        file_handler = logging.FileHandler(os.path.join(LOGS_DIR, 'telegram_reader.log'))
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        logger.info(f"Logowanie do pliku w {LOGS_DIR} zostało uruchomione")
+    except Exception as e:
+        print(f"Nie udało się skonfigurować logowania do pliku: {e}")
 
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('telethon.network.mtprotosender').setLevel(logging.WARNING)
