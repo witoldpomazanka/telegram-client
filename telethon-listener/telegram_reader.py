@@ -3,6 +3,7 @@ import asyncio
 import base64
 import json
 import logging
+import logging.handlers
 import os
 import pathlib
 import sys
@@ -28,23 +29,30 @@ logger.setLevel(logging.INFO)
 # Formatter dla logów
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+# Handler dla pliku (w katalogu /logs zamontowanym w Dockerze) z rotacją dzienną
+LOGS_DIR = '/logs'
+if os.path.exists(LOGS_DIR):
+    try:
+        # TimedRotatingFileHandler: rotacja co 1 dzień ('D'), zachowuje ostatnie 30 dni (backupCount=30)
+        file_handler = logging.handlers.TimedRotatingFileHandler(
+            os.path.join(LOGS_DIR, 'telegram_reader.log'),
+            when='D',
+            interval=1,
+            backupCount=30,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        logger.info(f"Logowanie do pliku w {LOGS_DIR} zostało uruchomione (rotacja dzienna)")
+    except Exception as e:
+        print(f"Nie udało się skonfigurować logowania do pliku: {e}")
+
 # Handler dla konsoli (stdout)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
-
-# Handler dla pliku (w katalogu /logs zamontowanym w Dockerze)
-LOGS_DIR = '/logs'
-if os.path.exists(LOGS_DIR):
-    try:
-        file_handler = logging.FileHandler(os.path.join(LOGS_DIR, 'telegram_reader.log'))
-        file_handler.setLevel(logging.INFO)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        logger.info(f"Logowanie do pliku w {LOGS_DIR} zostało uruchomione")
-    except Exception as e:
-        print(f"Nie udało się skonfigurować logowania do pliku: {e}")
 
 logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
 logging.getLogger('telethon.network.mtprotosender').setLevel(logging.WARNING)
@@ -557,15 +565,21 @@ async def handle_new_message(event):
         
         logger.info(f"NOWA WIADOMOŚĆ: Czat: {main_chat_title} ({chat_id}) | Temat: {topic_name or 'Brak'} | Nadawca: {sender_display_name} (@{sender_username or 'Brak'}, ID: {sender_id}) | Treść: {message_text_raw}")
 
-        # --- NOWY FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI) ---
+        # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI) ---
         # Sprawdzamy czy wiadomość jest odpowiedzią (reply) do innej wiadomości
-        # W grupach typu Forum, pierwsza wiadomość w temacie ma reply_to_msg_id == topic_id
-        # W zwykłych czatach, nowa wiadomość nie ma reply_to_msg_id.
         reply_to_msg_id = event.message.reply_to.reply_to_msg_id if event.message.reply_to else None
         
-        # Jeśli to jest odpowiedź na coś innego niż ID tematu (lub po prostu jest odpowiedzią w zwykłym czacie), to ignorujemy.
-        is_topic_main = (reply_to_msg_id is None) or (topic_id is not None and reply_to_msg_id == topic_id)
-        
+        is_topic_main = False
+        if reply_to_msg_id is None:
+            # Brak jakiegokolwiek reply - to na pewno główna wiadomość
+            is_topic_main = True
+        elif topic_id is not None and reply_to_msg_id == topic_id:
+            # W Telegram Forum, pierwsza wiadomość w wątku technicznym ma reply_to_msg_id wskazujący na ID tematu
+            is_topic_main = True
+        else:
+            # Jeśli jest reply_to_msg_id i NIE pasuje do topic_id, to jest to odpowiedź (komentarz)
+            is_topic_main = False
+
         if not is_topic_main:
             logger.info(f"ODRZUCONO (REPLY): {full_display_title} | Powód: Wiadomość jest odpowiedzią (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})")
             return
