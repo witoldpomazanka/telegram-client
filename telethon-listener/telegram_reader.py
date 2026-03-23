@@ -539,18 +539,24 @@ async def handle_new_message(event):
             or sender_name_str
             or 'Prywatny'
         )
-        topic_id = None
-        topic_suffix = ""
+        
+        # Pobieranie szczegółów reply/topic
         reply_to_msg_id = None
-        topic_name = None
-
+        topic_id = None
+        reply_to_top_id = None
+        is_forum = getattr(chat, 'forum', False)
+        
         if event.message.reply_to:
             reply_to_msg_id = getattr(event.message.reply_to, 'reply_to_msg_id', None)
-            topic_id = getattr(event.message.reply_to, 'reply_to_top_id', None)
-            
-            if getattr(chat, 'forum', False) and topic_id:
-                topic_name = await get_topic_name(event.chat_id, topic_id)
-                topic_suffix = f" [{topic_name}]"
+            # top_id to zazwyczaj ID pierwszego posta w temacie (Forum)
+            reply_to_top_id = getattr(event.message.reply_to, 'reply_to_top_id', None)
+            topic_id = reply_to_top_id # Alias dla czytelności
+
+        topic_name = None
+        topic_suffix = ""
+        if is_forum and topic_id:
+            topic_name = await get_topic_name(event.chat_id, topic_id)
+            topic_suffix = f" [{topic_name}]"
         
         full_display_title = f"{main_chat_title}{topic_suffix}"
 
@@ -561,75 +567,58 @@ async def handle_new_message(event):
         message_text_raw = (event.raw_text or '').replace('\n', '\\n')
         chat_id = str(getattr(chat, 'id', None))
         
+        # --- MEGA LOG DEBUGOWY ---
+        debug_info = {
+            "msg_id": event.message.id,
+            "chat": {"id": chat_id, "title": main_chat_title, "username": getattr(chat, 'username', None), "is_forum": is_forum},
+            "sender": {"id": sender_id, "username": sender_username, "name": sender_display_name},
+            "reply_info": {
+                "has_reply_to": bool(event.message.reply_to),
+                "reply_to_msg_id": reply_to_msg_id,
+                "reply_to_top_id": reply_to_top_id,
+                "topic_id": topic_id,
+                "topic_name": topic_name
+            },
+            "content_len": len(event.raw_text or ""),
+            "is_edit": bool(getattr(event.message, 'edit_date', None))
+        }
+        logger.info(f"DEBUG_MSG_INCOMING: {json.dumps(debug_info, ensure_ascii=False)}")
+        # -------------------------
+
         logger.info(f"NOWA WIADOMOŚĆ: Czat: {main_chat_title} ({chat_id}) | Temat: {topic_name or 'Brak'} | Nadawca: {sender_display_name} (@{sender_username or 'Brak'}, ID: {sender_id}) | Treść: {message_text_raw}")
 
-        # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI NA WIADOMOŚCI) ---
+        # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI ---
         is_topic_main = False
         
-        # Logowanie techniczne dla debugowania
-        logger.info(f"DEBUG: msg_id={event.message.id}, reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id}, forum={getattr(chat, 'forum', False)}")
-
-        # Sprawdzamy czy wiadomość ma nagłówek odpowiedzi
-        reply_header = event.message.reply_to
-
-        if not reply_header:
-            # Brak nagłówka reply_to - to na pewno nowa, samodzielna wiadomość
+        if not event.message.reply_to:
+            # Brak nagłówka reply_to - nowa wiadomość (np. kanał standardowy)
             is_topic_main = True
-        elif getattr(chat, 'forum', False):
-            # W grupach typu Forum (jak Trading PRO):
-            # 1. Nowa wiadomość w temacie MA nagłówek reply_to, gdzie reply_to_msg_id == topic_id (id pierwszego posta tematu)
-            # 2. Odpowiedź (komentarz) MA nagłówek reply_to, gdzie reply_to_msg_id != topic_id
-            
+            reject_reason = None
+        elif is_forum:
+            # W Forum: jeśli odpowiada na topic_id (początek tematu) -> to główna wiadomość
             if topic_id is not None and reply_to_msg_id == topic_id:
                 is_topic_main = True
+                reject_reason = None
             elif topic_id is None and reply_to_msg_id is not None:
-                # Czasem topic_id nie jest poprawnie sparsowane, ale reply_to_msg_id jest bardzo niskie (np. ID tematu)
-                # Dla bezpieczeństwa: jeśli to forum, a my nie mamy topic_id w obiekcie, 
-                # ale wiadomość wygląda na nową (brak parametru forum_topic_id w reply_to),
-                # to spróbujmy ją przepuścić jeśli nie potrafimy jednoznacznie stwierdzić że to komentarz.
+                # Brak topic_id ale jest reply_to (może być błąd API) - dla bezpieczeństwa puszczamy
                 is_topic_main = True
+                reject_reason = None
+            else:
+                is_topic_main = False
+                reject_reason = f"Komentarz/Reply do innej wiadomości (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})"
         else:
-            # W zwykłych kanałach/czatach (nie Forum):
-            # Każdy reply_to oznacza odpowiedź na inną wiadomość.
+            # Zwykły czat - każdy reply to odpowiedź
             is_topic_main = False
+            reject_reason = f"Wiadomość jest odpowiedzi w zwykłym czacie (reply_to={reply_to_msg_id})"
 
         if not is_topic_main:
-            logger.info(f"ODRZUCONO (REPLY): {full_display_title} | Powód: Wiadomość jest odpowiedzią na inną wiadomość (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})")
+            logger.info(f"ODRZUCONO (TYP_MSG): {full_display_title} | Powód: {reject_reason} | DEBUG: {json.dumps(debug_info['reply_info'])}")
             return
 
         # 2. BIAŁA LISTA (ALLOWED_SENDERS)
         allowed_env = os.getenv('ALLOWED_SENDERS', '')
         allowed_simple, allowed_group_topics = parse_allowed_senders_spec(allowed_env)
         chat_username = getattr(chat, 'username', '') or ''
-
-        msg_preview = (event.raw_text or '').replace('\n', '\\n')
-        if len(msg_preview) > 300:
-            msg_preview = msg_preview[:300] + "…"
-
-        details = {
-            "decision_stage": "pre_allowlist",
-            "chat_id": str(getattr(chat, 'id', None)),
-            "chat_title": getattr(chat, 'title', None),
-            "chat_username": chat_username,
-            "chat_forum": bool(getattr(chat, 'forum', False)),
-            "main_chat_title": main_chat_title,
-            "topic_id": topic_id,
-            "topic_name": topic_name,
-            "full_display_title": full_display_title,
-            "event_chat_id": str(getattr(event, 'chat_id', None)),
-            "message_id": str(getattr(event.message, 'id', None)),
-            "sender_id": str(getattr(sender, 'id', None)),
-            "sender_username": getattr(sender, 'username', None),
-            "sender_name": (((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or None),
-            "date": event.date.isoformat() if getattr(event, 'date', None) else None,
-            "has_media": bool(getattr(event.message, 'media', None)),
-            "text_len": len(event.raw_text or ''),
-            "text_preview": msg_preview,
-            "allowed_env": allowed_env,
-            "allowed_simple": sorted(allowed_simple),
-            "allowed_group_topics": {k: sorted(v) for k, v in allowed_group_topics.items()},
-        }
-        # logger.info("MSG_CHECK %s", json.dumps(details, ensure_ascii=False))
 
         allowed, reason = is_allowed_by_spec(
             allowed_simple=allowed_simple,
@@ -640,10 +629,12 @@ async def handle_new_message(event):
             topic_name=topic_name,
             sender_name=sender_name_str,
         )
+        
         if not allowed:
-            logger.info(f"ODRZUCONO (ALLOWLIST): {full_display_title} | Powód: {reason}")
+            logger.info(f"ODRZUCONO (ALLOWLIST): {full_display_title} | Powód: {reason} | NazwaNadawcy: {sender_name_str} | UsernameCzatu: {chat_username}")
             return
-        logger.info("ZAAKCEPTOWANO [%s]: %s", full_display_title, (event.raw_text or 'MEDIA/BRAK TEKSTU').replace('\n', ' '))
+            
+        logger.info(f"ZAAKCEPTOWANO [{full_display_title}]: Przesyłam do bazy i n8n. Treść: {message_text_raw[:100]}...")
 
         message_timezone = event.date.tzinfo
         media_list = await get_media_from_message(event)
