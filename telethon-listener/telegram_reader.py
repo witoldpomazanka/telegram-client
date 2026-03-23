@@ -544,14 +544,22 @@ async def handle_new_message(event):
         topic_suffix = ""
 
         # Sprawdzamy czy wiadomość należy do konkretnego wątku (Topic)
-        if event.message.reply_to and hasattr(event.message.reply_to, 'reply_to_top_id'):
-            topic_id = event.message.reply_to.reply_to_top_id
+        if event.message.reply_to:
+            # W nowszych wersjach Telethon reply_to może mieć reply_to_top_id (dla forum) i reply_to_msg_id
+            reply_to_msg_id = getattr(event.message.reply_to, 'reply_to_msg_id', None)
+            topic_id = getattr(event.message.reply_to, 'reply_to_top_id', None)
+            
+            # Logowanie pomocnicze dla debugowania
+            logger.info(f"DEBUG REPLY: reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id}, forum={getattr(chat, 'forum', False)}")
+
             if getattr(chat, 'forum', False) and topic_id:
                 topic_name = await get_topic_name(event.chat_id, topic_id)
                 topic_suffix = f" [{topic_name}]"
             else:
                 topic_name = None
         else:
+            topic_id = None
+            reply_to_msg_id = None
             topic_name = None
 
         full_display_title = f"{main_chat_title}{topic_suffix}"
@@ -567,7 +575,6 @@ async def handle_new_message(event):
 
         # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI) ---
         # Sprawdzamy czy wiadomość jest odpowiedzią (reply) do innej wiadomości
-        reply_to_msg_id = event.message.reply_to.reply_to_msg_id if event.message.reply_to else None
         
         is_topic_main = False
         if reply_to_msg_id is None:
@@ -576,8 +583,11 @@ async def handle_new_message(event):
         elif topic_id is not None and reply_to_msg_id == topic_id:
             # W Telegram Forum, pierwsza wiadomość w wątku technicznym ma reply_to_msg_id wskazujący na ID tematu
             is_topic_main = True
+        elif topic_id is None and reply_to_msg_id is not None:
+            # To jest zwykły reply w czacie, który nie jest forum (lub topic_id nie został wykryty)
+            is_topic_main = False
         else:
-            # Jeśli jest reply_to_msg_id i NIE pasuje do topic_id, to jest to odpowiedź (komentarz)
+            # Jeśli jest reply_to_msg_id i NIE pasuje do topic_id w forum, to jest to odpowiedź (komentarz)
             is_topic_main = False
 
         if not is_topic_main:
