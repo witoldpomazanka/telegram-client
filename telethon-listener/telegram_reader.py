@@ -532,7 +532,6 @@ async def handle_new_message(event):
         sender = await event.get_sender()
 
         # 1. Identyfikacja czatu i TEMATU (Topic/Forum)
-        # Dla prywatnych czatów (User) title i username mogą być None - fallback na imię sendera
         sender_name_str = ((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or None
         main_chat_title = (
             getattr(chat, 'title', None)
@@ -542,29 +541,20 @@ async def handle_new_message(event):
         )
         topic_id = None
         topic_suffix = ""
+        reply_to_msg_id = None
+        topic_name = None
 
-        # Sprawdzamy czy wiadomość należy do konkretnego wątku (Topic)
         if event.message.reply_to:
-            # W nowszych wersjach Telethon reply_to może mieć reply_to_top_id (dla forum) i reply_to_msg_id
             reply_to_msg_id = getattr(event.message.reply_to, 'reply_to_msg_id', None)
             topic_id = getattr(event.message.reply_to, 'reply_to_top_id', None)
             
-            # Logowanie pomocnicze dla debugowania
-            logger.info(f"DEBUG REPLY: reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id}, forum={getattr(chat, 'forum', False)}")
-
             if getattr(chat, 'forum', False) and topic_id:
                 topic_name = await get_topic_name(event.chat_id, topic_id)
                 topic_suffix = f" [{topic_name}]"
-            else:
-                topic_name = None
-        else:
-            topic_id = None
-            reply_to_msg_id = None
-            topic_name = None
-
+        
         full_display_title = f"{main_chat_title}{topic_suffix}"
 
-        # Ekstrakcja danych do logu "wszystko wszystko wszystko"
+        # Ekstrakcja danych do logu
         sender_id = str(getattr(sender, 'id', None))
         sender_username = getattr(sender, 'username', None)
         sender_display_name = (((getattr(sender, 'first_name', '') or '') + ' ' + (getattr(sender, 'last_name', '') or '')).strip() or "Brak")
@@ -573,29 +563,41 @@ async def handle_new_message(event):
         
         logger.info(f"NOWA WIADOMOŚĆ: Czat: {main_chat_title} ({chat_id}) | Temat: {topic_name or 'Brak'} | Nadawca: {sender_display_name} (@{sender_username or 'Brak'}, ID: {sender_id}) | Treść: {message_text_raw}")
 
-        # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI) ---
-        # Sprawdzamy czy wiadomość jest odpowiedzią (reply) do innej wiadomości
-        
+        # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI (NIE ODPOWIEDZI NA WIADOMOŚCI) ---
         is_topic_main = False
-        if reply_to_msg_id is None:
-            # Brak jakiegokolwiek reply - to na pewno główna wiadomość
+        
+        # Logowanie techniczne dla debugowania
+        logger.info(f"DEBUG: msg_id={event.message.id}, reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id}, forum={getattr(chat, 'forum', False)}")
+
+        # Sprawdzamy czy wiadomość ma nagłówek odpowiedzi
+        reply_header = event.message.reply_to
+
+        if not reply_header:
+            # Brak nagłówka reply_to - to na pewno nowa, samodzielna wiadomość
             is_topic_main = True
-        elif topic_id is not None and reply_to_msg_id == topic_id:
-            # W Telegram Forum, pierwsza wiadomość w wątku technicznym ma reply_to_msg_id wskazujący na ID tematu
-            is_topic_main = True
-        elif topic_id is None and reply_to_msg_id is not None:
-            # To jest zwykły reply w czacie, który nie jest forum (lub topic_id nie został wykryty)
-            is_topic_main = False
+        elif getattr(chat, 'forum', False):
+            # W grupach typu Forum (jak Trading PRO):
+            # 1. Nowa wiadomość w temacie MA nagłówek reply_to, gdzie reply_to_msg_id == topic_id (id pierwszego posta tematu)
+            # 2. Odpowiedź (komentarz) MA nagłówek reply_to, gdzie reply_to_msg_id != topic_id
+            
+            if topic_id is not None and reply_to_msg_id == topic_id:
+                is_topic_main = True
+            elif topic_id is None and reply_to_msg_id is not None:
+                # Czasem topic_id nie jest poprawnie sparsowane, ale reply_to_msg_id jest bardzo niskie (np. ID tematu)
+                # Dla bezpieczeństwa: jeśli to forum, a my nie mamy topic_id w obiekcie, 
+                # ale wiadomość wygląda na nową (brak parametru forum_topic_id w reply_to),
+                # to spróbujmy ją przepuścić jeśli nie potrafimy jednoznacznie stwierdzić że to komentarz.
+                is_topic_main = True
         else:
-            # Jeśli jest reply_to_msg_id i NIE pasuje do topic_id w forum, to jest to odpowiedź (komentarz)
+            # W zwykłych kanałach/czatach (nie Forum):
+            # Każdy reply_to oznacza odpowiedź na inną wiadomość.
             is_topic_main = False
 
         if not is_topic_main:
-            logger.info(f"ODRZUCONO (REPLY): {full_display_title} | Powód: Wiadomość jest odpowiedzią (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})")
+            logger.info(f"ODRZUCONO (REPLY): {full_display_title} | Powód: Wiadomość jest odpowiedzią na inną wiadomość (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})")
             return
 
-        # 2. ZAMIANA IGNOROWANYCH NA ALLOWED (Biała lista)
-        # Pobieramy ALLOWED_SENDERS z .env
+        # 2. BIAŁA LISTA (ALLOWED_SENDERS)
         allowed_env = os.getenv('ALLOWED_SENDERS', '')
         allowed_simple, allowed_group_topics = parse_allowed_senders_spec(allowed_env)
         chat_username = getattr(chat, 'username', '') or ''
