@@ -548,9 +548,9 @@ async def handle_new_message(event):
         
         if event.message.reply_to:
             reply_to_msg_id = getattr(event.message.reply_to, 'reply_to_msg_id', None)
-            # top_id to zazwyczaj ID pierwszego posta w temacie (Forum)
             reply_to_top_id = getattr(event.message.reply_to, 'reply_to_top_id', None)
-            topic_id = reply_to_top_id # Alias dla czytelności
+            # W Telethonie dla forum topic_id to często reply_to_msg_id, jeśli reply_to_top_id jest nullem
+            topic_id = reply_to_top_id or reply_to_msg_id 
 
         topic_name = None
         topic_suffix = ""
@@ -595,17 +595,19 @@ async def handle_new_message(event):
             is_topic_main = True
             reject_reason = None
         elif is_forum:
-            # W Forum: jeśli odpowiada na topic_id (początek tematu) -> to główna wiadomość
-            if topic_id is not None and reply_to_msg_id == topic_id:
+            # Poprawiona logika dla Forum:
+            # Jeśli reply_to_top_id jest None, a reply_to_msg_id jest ustawione, 
+            # to w wielu przypadkach w Telethonie oznacza to nową wiadomość w temacie (topic_id = reply_to_msg_id)
+            if reply_to_top_id is None and reply_to_msg_id is not None:
                 is_topic_main = True
                 reject_reason = None
-            elif topic_id is None and reply_to_msg_id is not None:
-                # Brak topic_id ale jest reply_to (może być błąd API) - dla bezpieczeństwa puszczamy
+            # Jeśli reply_to_top_id == reply_to_msg_id, to też jest to często "otwarcie" wątku widoczne jako reply
+            elif reply_to_top_id == reply_to_msg_id:
                 is_topic_main = True
                 reject_reason = None
             else:
                 is_topic_main = False
-                reject_reason = f"Komentarz/Reply do innej wiadomości (reply_to_msg_id={reply_to_msg_id}, topic_id={topic_id})"
+                reject_reason = f"Komentarz/Reply (reply_to_msg_id={reply_to_msg_id}, top_id={reply_to_top_id})"
         else:
             # Zwykły czat - każdy reply to odpowiedź
             is_topic_main = False
