@@ -36,15 +36,17 @@ if os.path.exists(LOGS_DIR):
         # TimedRotatingFileHandler: rotacja co 1 dzień ('D'), zachowuje ostatnie 30 dni (backupCount=30)
         file_handler = logging.handlers.TimedRotatingFileHandler(
             os.path.join(LOGS_DIR, 'telegram_reader.log'),
-            when='D',
+            when='midnight',
             interval=1,
             backupCount=30,
             encoding='utf-8'
         )
+        # Ustawienie formatu nazwy pliku z datą na końcu
+        file_handler.suffix = "%Y-%m-%d"
         file_handler.setLevel(logging.INFO)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-        logger.info(f"Logowanie do pliku w {LOGS_DIR} zostało uruchomione (rotacja dzienna)")
+        logger.info(f"Logowanie do pliku w {LOGS_DIR} zostało uruchomione (rotacja dzienna z datą w nazwie)")
     except Exception as e:
         print(f"Nie udało się skonfigurować logowania do pliku: {e}")
 
