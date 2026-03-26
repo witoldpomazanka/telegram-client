@@ -636,7 +636,19 @@ async def handle_new_message(event):
             # logger.info(f"ODRZUCONO (ALLOWLIST): {full_display_title} | Powód: {reason} | NazwaNadawcy: {sender_name_str} | UsernameCzatu: {chat_username}")
             return
             
-        logger.info(f"ZAAKCEPTOWANO [{full_display_title}]: Przesyłam do bazy i n8n. Treść: {message_text_raw[:100]}...")
+        # Rozszerzone logowanie dla zaakceptowanych wiadomości
+        accept_log_data = {
+            "msg_id": event.message.id,
+            "display_title": full_display_title,
+            "main_chat": main_chat_title,
+            "topic": topic_name,
+            "sender": sender_display_name,
+            "sender_id": sender_id,
+            "reply_to_msg_id": reply_to_msg_id,
+            "reply_to_top_id": reply_to_top_id,
+            "content": event.raw_text
+        }
+        logger.info(f"ZAAKCEPTOWANO: {json.dumps(accept_log_data, ensure_ascii=False)}")
 
         message_timezone = event.date.tzinfo
         media_list = await get_media_from_message(event)
