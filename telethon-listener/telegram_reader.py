@@ -526,7 +526,7 @@ async def broadcast_message(message):
 
 
 async def handle_new_message(event):
-    logger.info("=== handle_new_message START ===")
+    # logger.info("=== handle_new_message START ===")
     try:
         chat = await event.get_chat()
         sender = await event.get_sender()
@@ -582,10 +582,10 @@ async def handle_new_message(event):
             "content_len": len(event.raw_text or ""),
             "is_edit": bool(getattr(event.message, 'edit_date', None))
         }
-        logger.info(f"DEBUG_MSG_INCOMING: {json.dumps(debug_info, ensure_ascii=False)}")
+        # logger.info(f"DEBUG_MSG_INCOMING: {json.dumps(debug_info, ensure_ascii=False)}")
         # -------------------------
 
-        logger.info(f"NOWA WIADOMOŚĆ: Czat: {main_chat_title} ({chat_id}) | Temat: {topic_name or 'Brak'} | Nadawca: {sender_display_name} (@{sender_username or 'Brak'}, ID: {sender_id}) | Treść: {message_text_raw}")
+        # logger.info(f"NOWA WIADOMOŚĆ: Czat: {main_chat_title} ({chat_id}) | Temat: {topic_name or 'Brak'} | Nadawca: {sender_display_name} (@{sender_username or 'Brak'}, ID: {sender_id}) | Treść: {message_text_raw}")
 
         # --- FILTR: TYLKO GŁÓWNE WIADOMOŚCI ---
         is_topic_main = False
@@ -614,7 +614,7 @@ async def handle_new_message(event):
             reject_reason = f"Wiadomość jest odpowiedzi w zwykłym czacie (reply_to={reply_to_msg_id})"
 
         if not is_topic_main:
-            logger.info(f"ODRZUCONO (TYP_MSG): {full_display_title} | Powód: {reject_reason} | DEBUG: {json.dumps(debug_info['reply_info'])}")
+            # logger.info(f"ODRZUCONO (TYP_MSG): {full_display_title} | Powód: {reject_reason} | DEBUG: {json.dumps(debug_info['reply_info'])}")
             return
 
         # 2. BIAŁA LISTA (ALLOWED_SENDERS)
@@ -633,7 +633,7 @@ async def handle_new_message(event):
         )
         
         if not allowed:
-            logger.info(f"ODRZUCONO (ALLOWLIST): {full_display_title} | Powód: {reason} | NazwaNadawcy: {sender_name_str} | UsernameCzatu: {chat_username}")
+            # logger.info(f"ODRZUCONO (ALLOWLIST): {full_display_title} | Powód: {reason} | NazwaNadawcy: {sender_name_str} | UsernameCzatu: {chat_username}")
             return
             
         logger.info(f"ZAAKCEPTOWANO [{full_display_title}]: Przesyłam do bazy i n8n. Treść: {message_text_raw[:100]}...")
